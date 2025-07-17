@@ -32,7 +32,7 @@
         "configurations": [
             {
                 "name": "Python: Current File",
-                "type": "python",
+                "type": "debugpy",
                 "request": "launch",
                 "program": "${file}",
                 "console": "integratedTerminal",
@@ -43,7 +43,7 @@
             },
             {
                 "name": "Pytest: Current File",
-                "type": "python",
+                "type": "debugpy",
                 "request": "launch",
                 "module": "pytest",
                 "args": ["${file}", "-v"],

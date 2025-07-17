@@ -273,6 +273,12 @@ class ConnectionManager:
     def subscribe_ticker(self, ticker: str, exchange: str = "F") -> bool:
         """Subscreve para receber dados de um ticker"""
         try:
+            if self.dll is None:
+                self.logger.error("DLL não está carregada. Inicialize antes de subscrever ticker.")
+                return False
+            if not hasattr(self.dll, "SubscribeTicker"):
+                self.logger.error("Método SubscribeTicker não encontrado na DLL.")
+                return False
             result = self.dll.SubscribeTicker(c_wchar_p(ticker), c_wchar_p(exchange))
             if result == 0:
                 self.logger.info(f"Subscrito para {ticker} em {exchange}")
@@ -288,9 +294,17 @@ class ConnectionManager:
                                end_date: datetime) -> int:
         """Solicita dados históricos"""
         try:
+            if self.dll is None:
+                self.logger.error("DLL não está carregada. Inicialize antes de solicitar dados históricos.")
+                return -1
+
             start_str = start_date.strftime('%d/%m/%Y %H:%M:00')
             end_str = end_date.strftime('%d/%m/%Y %H:%M:00')
             
+            if not hasattr(self.dll, "GetHistoryTrades"):
+                self.logger.error("Método GetHistoryTrades não encontrado na DLL.")
+                return -1
+
             result = self.dll.GetHistoryTrades(
                 c_wchar_p(ticker),
                 c_wchar_p("F"),
