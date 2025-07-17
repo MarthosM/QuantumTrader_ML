@@ -85,6 +85,28 @@ pytest
 4. Push para a branch (`git push origin feature/AmazingFeature`)
 5. Abra um Pull Request
 
+## 🤖 Desenvolvimento com IA
+
+Este projeto está configurado para uso otimizado com GitHub Copilot e outras ferramentas de IA:
+
+### 📋 Documentação de Referência para IA
+- **Mapeamento Completo**: `src/features/complete_ml_data_flow_map.md` - Arquitetura detalhada do sistema
+- **Instruções Copilot**: `.github/copilot-instructions.md` - Diretrizes específicas do projeto
+- **Configurações VS Code**: `.vscode/settings.json` - Configurações otimizadas
+
+### 🎯 Como a IA Deve Abordar Este Projeto
+1. **Sempre consultar** o mapeamento de fluxo de dados antes de implementar
+2. **Seguir padrões** estabelecidos nos testes existentes
+3. **Manter arquitetura** modular com DataFrames separados
+4. **Validar dados** em cada etapa do pipeline
+5. **Usar threading** para operações pesadas
+
+### 📊 Principais Referências Arquiteturais
+- **Fluxo de Dados**: Modelos → Dados → Indicadores → Features → Predição → Sinal
+- **Classes Core**: ModelManager, ConnectionManager, TradingDataStructure
+- **Features**: ~80-100 features incluindo OHLCV, indicadores técnicos, momentum, volatilidade
+- **Testes**: Padrão pytest com DLL real quando disponível
+
 ## 📄 Licença
 
 Este projeto está sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para detalhes.

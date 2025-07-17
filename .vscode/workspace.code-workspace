@@ -1,0 +1,73 @@
+{
+    "folders": [
+        {
+            "name": "ML Trading v2.0",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "github.copilot.chat.localeOverride": "pt-br",
+        "python.defaultInterpreterPath": "./.venv/Scripts/python.exe",
+        "python.analysis.extraPaths": [
+            "./src"
+        ],
+        "files.associations": {
+            "*.md": "markdown",
+            "*.json": "jsonc"
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.vscode-pylance",
+            "github.copilot",
+            "github.copilot-chat",
+            "ms-python.pytest",
+            "ms-toolsai.jupyter",
+            "yzhang.markdown-all-in-one"
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Python: Current File",
+                "type": "python",
+                "request": "launch",
+                "program": "${file}",
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PYTHONPATH": "${workspaceFolder}/src"
+                }
+            },
+            {
+                "name": "Pytest: Current File",
+                "type": "python",
+                "request": "launch",
+                "module": "pytest",
+                "args": ["${file}", "-v"],
+                "console": "integratedTerminal",
+                "cwd": "${workspaceFolder}"
+            }
+        ]
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Run Tests",
+                "type": "shell",
+                "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+                "args": ["-m", "pytest", "tests/", "-v"],
+                "group": "test",
+                "presentation": {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared"
+                }
+            }
+        ]
+    }
+}
