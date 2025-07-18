@@ -37,7 +37,17 @@ class ConnectionManager:
         self.login_state = -1
         self.routing_state = -1
         self.market_state = -1
-        
+
+        # Constantes de estado do manual
+        self.CONNECTION_STATE_LOGIN = 0
+        self.CONNECTION_STATE_ROTEAMENTO = 1
+        self.CONNECTION_STATE_MARKET_DATA = 2
+        self.CONNECTION_STATE_MARKET_LOGIN = 3
+
+        self.LOGIN_CONNECTED = 0
+        self.MARKET_CONNECTED = 4
+        self.ROTEAMENTO_BROKER_CONNECTED = 5
+                
         # Configurações do servidor
         self.server_address = os.getenv("SERVER_ADDRESS", "producao.nelogica.com.br")
         self.server_port = os.getenv("SERVER_PORT", "8184")
@@ -128,26 +138,30 @@ class ConnectionManager:
         
         # State callback
         @WINFUNCTYPE(None, c_int, c_int)
-        def state_callback(state_type, state_value):
+        def state_callback(nConnStateType, nResult):
             try:
-                if state_type == 0:  # LOGIN_STATE
-                    self.login_state = state_value
-                    self.logger.info(f"Estado de login: {state_value}")
-                elif state_type == 1:  # ROUTING_STATE
-                    self.routing_state = state_value
-                    self.logger.info(f"Estado de roteamento: {state_value}")
-                    if state_value == 5:  # BROKER_CONNECTED
+                if nConnStateType == self.CONNECTION_STATE_LOGIN:
+                    self.login_state = nResult
+                    self.logger.info(f"Estado de login: {nResult}")
+                    if nResult == self.LOGIN_CONNECTED:
+                        self.logger.info("Login conectado com sucesso")
+                        
+                elif nConnStateType == self.CONNECTION_STATE_ROTEAMENTO:
+                    self.routing_state = nResult
+                    self.logger.info(f"Estado de roteamento: {nResult}")
+                    if nResult == self.ROTEAMENTO_BROKER_CONNECTED:
                         self.routing_connected = True
                         self.broker_connected = True
-                elif state_type == 2:  # MARKET_DATA_STATE
-                    self.market_state = state_value
-                    self.logger.info(f"Estado de market data: {state_value}")
-                    if state_value == 4:  # MARKET_CONNECTED
-                        self.market_connected = True
                         
+                elif nConnStateType == self.CONNECTION_STATE_MARKET_DATA:
+                    self.market_state = nResult
+                    self.logger.info(f"Estado de market data: {nResult}")
+                    if nResult == self.MARKET_CONNECTED:
+                        self.market_connected = True
+                            
                 # Notificar callbacks registrados
                 for callback in self.state_callbacks:
-                    callback(state_type, state_value)
+                    callback(nConnStateType, nResult)
                     
             except Exception as e:
                 self.logger.error(f"Erro no state callback: {e}")
@@ -156,7 +170,7 @@ class ConnectionManager:
         @WINFUNCTYPE(None, TAssetID, c_wchar_p, c_uint, c_double, c_double, 
                      c_int, c_int, c_int, c_int, c_char)
         def trade_callback(asset_id, date, trade_number, price, vol, qtd, 
-                          buy_agent, sell_agent, trade_type, is_edit):
+                          buy_agent, sell_agent, trade_type, b_edit):
             try:
                 timestamp = datetime.strptime(str(date), '%d/%m/%Y %H:%M:%S.%f')
                 
@@ -202,17 +216,23 @@ class ConnectionManager:
         def price_book_callback(*args):
             pass
         
-        # Callbacks de ordem (stubs por enquanto)
+        # TOrderChangeCallback tem 17 parâmetros, não 18
         @WINFUNCTYPE(None, TAssetID, c_int, c_int, c_int, c_int, c_int, c_double,
-                     c_double, c_double, c_longlong, c_wchar_p, c_wchar_p, c_wchar_p,
-                     c_wchar_p, c_wchar_p, c_wchar_p, c_wchar_p)
-        def order_change_callback(*args):
+                    c_double, c_double, c_longlong, c_wchar_p, c_wchar_p, c_wchar_p,
+                    c_wchar_p, c_wchar_p, c_wchar_p, c_wchar_p)
+        def order_change_callback(asset_id, corretora, qtd, traded_qtd, leaves_qtd,
+                                side, price, stop_price, avg_price, profit_id,
+                                tipo_ordem, conta, titular, cl_ord_id, status,
+                                date, text_message):
             pass
-        
+
+        # THistoryCallback tem 16 parâmetros, não 17  
         @WINFUNCTYPE(None, TAssetID, c_int, c_int, c_int, c_int, c_int, c_double,
-                     c_double, c_double, c_longlong, c_wchar_p, c_wchar_p, c_wchar_p,
-                     c_wchar_p, c_wchar_p, c_wchar_p)
-        def order_history_callback(*args):
+                    c_double, c_double, c_longlong, c_wchar_p, c_wchar_p, c_wchar_p,
+                    c_wchar_p, c_wchar_p, c_wchar_p)
+        def order_history_callback(asset_id, corretora, qtd, traded_qtd, leaves_qtd,
+                                side, price, stop_price, avg_price, profit_id,
+                                tipo_ordem, conta, titular, cl_ord_id, status, date):
             pass
         
         @WINFUNCTYPE(None, c_int, c_wchar_p, c_wchar_p, c_wchar_p)
@@ -318,6 +338,25 @@ class ConnectionManager:
             self.logger.error(f"Erro solicitando dados históricos: {e}")
             return -1
     
+    def unsubscribe_ticker(self, ticker: str) -> bool:
+        """
+        Cancela subscrição de um ticker
+        
+        Args:
+            ticker: Código do ativo
+            
+        Returns:
+            bool: Sucesso da operação
+        """
+        try:
+            # Implementar chamada específica da DLL
+            # Por enquanto, apenas log
+            self.logger.info(f"Cancelando subscrição de {ticker}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Erro ao cancelar subscrição: {e}")
+            return False
+        
     def disconnect(self):
         """Desconecta e limpa recursos"""
         try:
@@ -327,3 +366,27 @@ class ConnectionManager:
             self.connected = False
         except Exception as e:
             self.logger.error(f"Erro ao desconectar: {e}")
+
+    def get_account_info(self) -> bool:
+        """
+        Solicita informações das contas disponíveis
+        
+        Returns:
+            bool: Sucesso da operação
+        """
+        try:
+            if not self.dll or not self.connected:
+                self.logger.error("DLL não está conectada")
+                return False
+                
+            result = self.dll.GetAccount()
+            if result == 0:  # NL_OK
+                self.logger.info("Solicitação de contas enviada")
+                return True
+            else:
+                self.logger.error(f"Erro ao solicitar contas: código {result}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao obter informações de conta: {e}")
+            return False
