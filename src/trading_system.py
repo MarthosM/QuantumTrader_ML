@@ -127,16 +127,13 @@ class TradingSystem:
     def _setup_logger(self) -> logging.Logger:
         """Configura o sistema de logging"""
         logger = logging.getLogger('TradingSystemV2')
-        logger.setLevel(logging.INFO)
         
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            
+        # Usar apenas propagação para o logger raiz configurado no main
+        logger.propagate = True
+        
+        # Não adicionar handlers próprios para evitar duplicação
+        # O handler do main.py (basicConfig) já cuida da saída
+        
         return logger
         
     def initialize(self) -> bool:
@@ -150,9 +147,12 @@ class TradingSystem:
             self.logger.info("1. Inicializando conexão...")
             self.connection = ConnectionManager(self.config['dll_path'])
             if not self.connection.initialize(
+                key=self.config.get('key', ''),
                 username=self.config['username'],
                 password=self.config['password'],
-                key=self.config.get('key', '')
+                account_id=self.config.get('account_id'),
+                broker_id=self.config.get('broker_id'),
+                trading_password=self.config.get('trading_password')
             ):
                 self.logger.error("Falha ao inicializar conexão")
                 return False

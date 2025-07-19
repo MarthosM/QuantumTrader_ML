@@ -41,6 +41,9 @@ class TechnicalIndicators:
         # ADX
         self._calculate_adx(candles, indicators)
         
+        # Features compostas necessárias para os modelos
+        self._calculate_composite_features(candles, indicators)
+        
         self.logger.info(f"Indicadores calculados: {len(indicators.columns)} colunas")
         
         return indicators
@@ -48,8 +51,8 @@ class TechnicalIndicators:
     def _calculate_moving_averages(self, candles: pd.DataFrame, indicators: pd.DataFrame):
         """Calcula médias móveis exponenciais e simples"""
         try:
-            # EMAs principais
-            ema_periods = [9, 20, 50, 200]
+            # EMAs principais (incluindo ema_5 que estava faltando)
+            ema_periods = [5, 9, 20, 50, 200]
             for period in ema_periods:
                 if len(candles) >= period:
                     indicators[f'ema_{period}'] = candles['close'].ewm(
@@ -273,6 +276,67 @@ class TechnicalIndicators:
             
         except Exception as e:
             self.logger.error(f"Erro calculando ADX: {e}")
+    
+    def _calculate_composite_features(self, candles: pd.DataFrame, indicators: pd.DataFrame):
+        """Calcula features compostas requeridas pelos modelos"""
+        try:
+            # ema_diff: Diferença entre EMAs rápida e lenta
+            if 'ema_9' in indicators and 'ema_20' in indicators:
+                indicators['ema_diff'] = indicators['ema_9'] - indicators['ema_20']
+            
+            # ema_diff_fast: Diferença entre EMA muito rápida e rápida
+            if 'ema_5' in indicators and 'ema_9' in indicators:
+                indicators['ema_diff_fast'] = indicators['ema_5'] - indicators['ema_9']
+            
+            # bb_width: Largura das Bollinger Bands padrão (sem sufixo)
+            if 'bb_width_20' in indicators:
+                indicators['bb_width'] = indicators['bb_width_20']
+            
+            # bb_width_10: Bollinger Bands com período 10
+            if len(candles) >= 10:
+                middle_10 = candles['close'].rolling(window=10).mean()
+                std_10 = candles['close'].rolling(window=10).std()
+                upper_10 = middle_10 + (2 * std_10)
+                lower_10 = middle_10 - (2 * std_10)
+                indicators['bb_width_10'] = upper_10 - lower_10
+            
+            # range_percent: Percentual do range intraday
+            indicators['range_percent'] = ((candles['high'] - candles['low']) / candles['close']) * 100
+            
+            # volume_ratio: Ratio de volume atual vs média
+            if len(candles) >= 20:
+                volume_ma = candles['volume'].rolling(window=20).mean()
+                indicators['volume_ratio'] = candles['volume'] / volume_ma.replace(0, 1)
+            
+            # adx_substitute: Substituto para ADX quando não disponível
+            if 'adx' in indicators:
+                indicators['adx_substitute'] = indicators['adx']
+            else:
+                # Usar volatilidade como substituto
+                returns = candles['close'].pct_change()
+                if len(candles) >= 14:
+                    vol_substitute = returns.rolling(14).std() * 100
+                    indicators['adx_substitute'] = vol_substitute.clip(0, 100)
+            
+            # volatility_ratio: Ratio de volatilidade atual vs histórica
+            if len(candles) >= 50:
+                returns = candles['close'].pct_change()
+                vol_5 = returns.rolling(5).std()
+                vol_20 = returns.rolling(20).std()
+                indicators['volatility_ratio'] = vol_5 / vol_20.replace(0, 1)
+            
+            # ichimoku_conversion_line: Linha de conversão do Ichimoku
+            if len(candles) >= 9:
+                high_9 = candles['high'].rolling(9).max()
+                low_9 = candles['low'].rolling(9).min()
+                indicators['ichimoku_conversion_line'] = (high_9 + low_9) / 2
+            
+            # momentum: Momentum simples (diferença de preço)
+            if len(candles) >= 1:
+                indicators['momentum'] = candles['close'] - candles['close'].shift(1)
+                
+        except Exception as e:
+            self.logger.error(f"Erro calculando features compostas: {e}")
     
     def calculate_specific(self, candles: pd.DataFrame, 
                          indicator_names: List[str]) -> pd.DataFrame:

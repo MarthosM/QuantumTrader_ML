@@ -56,12 +56,29 @@ class ConnectionManager:
         self.trade_callbacks = []
         self.state_callbacks = []
         
-    def initialize(self, key: str, username: str, password: str) -> bool:
+    def initialize(self, key: str, username: str, password: str, 
+                  account_id: Optional[str] = None, broker_id: Optional[str] = None, 
+                  trading_password: Optional[str] = None) -> bool:
         """
         Inicializa conexão com Profit
         Baseado em real_ml.py _initialize_dll()
+        
+        Args:
+            key: Chave de acesso do Profit
+            username: Nome de usuário
+            password: Senha de login
+            account_id: ID da conta (para simulador)
+            broker_id: ID da corretora (para simulador)
+            trading_password: Senha de trading (se necessária)
         """
         try:
+            # Log dos parâmetros (sem senhas por segurança)
+            self.logger.info(f"Inicializando conexão com usuário: {username}")
+            if account_id:
+                self.logger.info(f"Conta: {account_id}")
+            if broker_id:
+                self.logger.info(f"Corretora: {broker_id}")
+            
             # Carregar DLL
             self.dll = self._load_dll()
             if not self.dll:

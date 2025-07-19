@@ -13,8 +13,12 @@ import pandas as pd
 class ModelManager:
     """Gerencia carregamento e acesso aos modelos ML"""
     
-    def __init__(self, models_dir: str = 'saved_models'):
-        self.models_dir = models_dir if models_dir != 'saved_models' else r"C:\Users\marth\OneDrive\Programacao\Python\Projetos\ML_Tradingv2.0\src\models\models_regime3"
+    def __init__(self, models_dir: str = 'models'):
+        # Usar o caminho fornecido ou o padrão se não especificado adequadamente
+        if models_dir in ['models', 'saved_models', 'src/models']:
+            self.models_dir = r"C:\Users\marth\OneDrive\Programacao\Python\Projetos\ML_Tradingv2.0\src\models\models_regime3"
+        else:
+            self.models_dir = models_dir
         self.models: Dict[str, Any] = {}
         self.model_features: Dict[str, List[str]] = {}
         self.model_metadata: Dict[str, Dict] = {}
@@ -87,43 +91,71 @@ class ModelManager:
         features = []
         
         try:
-            # Tentar diferentes métodos dependendo do tipo de modelo
-            
             # XGBoost
             if hasattr(model, 'get_booster'):
-                booster = model.get_booster()
-                if hasattr(booster, 'feature_names'):
-                    features = booster.feature_names
-                elif hasattr(booster, 'get_score'):
-                    features = list(booster.get_score().keys())
+                try:
+                    booster = model.get_booster()
+                    # Tentar múltiplas formas de obter features
+                    if hasattr(booster, 'feature_names'):
+                        features = list(booster.feature_names)
+                    elif hasattr(booster, 'get_score'):
+                        features = list(booster.get_score(importance_type='weight').keys())
                     
+                    # Se ainda não temos features, tentar do modelo diretamente
+                    if not features and hasattr(model, 'feature_names_in_'):
+                        features = list(model.feature_names_in_)
+                        
+                except Exception as e:
+                    self.logger.warning(f"Erro extraindo features XGBoost: {e}")
+            
             # LightGBM
             elif hasattr(model, 'booster_'):
-                if hasattr(model.booster_, 'feature_name'):
-                    features = model.booster_.feature_name()
-                elif hasattr(model, 'feature_name_'):
-                    features = model.feature_name_
-                    
-            # Scikit-learn
+                try:
+                    booster = model.booster_
+                    if hasattr(booster, 'feature_name'):
+                        features = list(booster.feature_name())
+                    elif hasattr(model, 'feature_name_'):
+                        features = list(model.feature_name_)
+                    elif hasattr(model, 'feature_names_in_'):
+                        features = list(model.feature_names_in_)
+                except Exception as e:
+                    self.logger.warning(f"Erro extraindo features LightGBM: {e}")
+            
+            # Scikit-learn e outros
             elif hasattr(model, 'feature_names_in_'):
                 features = list(model.feature_names_in_)
             elif hasattr(model, 'get_feature_names_out'):
-                features = list(model.get_feature_names_out())
-                
-            # Fallback: tentar ler de arquivo de features
+                try:
+                    features = list(model.get_feature_names_out())
+                except:
+                    pass
+                    
+            # Verificar arquivo de features salvo junto com o modelo
             if not features:
                 features_file = os.path.join(self.models_dir, f"{model_name}_features.json")
                 if os.path.exists(features_file):
                     with open(features_file, 'r') as f:
                         features = json.load(f)
-                        
-        except Exception as e:
-            self.logger.warning(f"Erro extraindo features do modelo {model_name}: {e}")
+                        self.logger.info(f"Features carregadas de arquivo para {model_name}")
             
-        # Se ainda não temos features, usar conjunto padrão
-        if not features:
-            self.logger.warning(f"Usando features padrão para {model_name}")
-            features = self._get_default_features()
+            # Validar features
+            if features:
+                # Remover duplicatas preservando ordem
+                seen = set()
+                unique_features = []
+                for f in features:
+                    if f not in seen:
+                        seen.add(f)
+                        unique_features.append(f)
+                features = unique_features
+                
+                self.logger.info(f"Modelo {model_name}: {len(features)} features extraídas")
+                self.logger.debug(f"Primeiras 10 features: {features[:10]}")
+            else:
+                self.logger.warning(f"Nenhuma feature extraída para {model_name}")
+                
+        except Exception as e:
+            self.logger.error(f"Erro extraindo features do modelo {model_name}: {e}")
             
         return features
     
