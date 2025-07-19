@@ -36,6 +36,7 @@ six==1.17.0
 sklearn-compat==0.1.3
 SQLAlchemy==2.0.37
 ta==0.11.0
+tensorflow==2.19.0
 threadpoolctl==3.5.0
 tqdm==4.67.1
 typing_extensions==4.12.2

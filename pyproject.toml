@@ -1,0 +1,48 @@
+# pyproject.toml - Configurações para ferramentas de desenvolvimento
+
+[tool.pylint]
+disable = [
+    "import-error",
+    "no-name-in-module", 
+    "unused-import",
+    "wrong-import-order"
+]
+
+# Ignorar erros específicos do TensorFlow/Keras
+extension-pkg-allow-list = [
+    "tensorflow",
+    "tensorflow.keras",
+    "keras"
+]
+
+[tool.mypy]
+# Configurações para MyPy
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# Ignorar módulos específicos
+[[tool.mypy.overrides]]
+module = [
+    "tensorflow.*",
+    "keras.*",
+    "sklearn.*",
+    "xgboost.*",
+    "lightgbm.*"
+]
+ignore_missing_imports = true
+ignore_errors = true
+
+[tool.black]
+line-length = 100
+target-version = ['py312']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"

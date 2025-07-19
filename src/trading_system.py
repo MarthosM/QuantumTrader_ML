@@ -4,6 +4,7 @@ Integra todos os componentes em um sistema coeso e funcional
 """
 
 import logging
+import os
 import threading
 import time
 import queue
@@ -26,6 +27,8 @@ from risk_manager import RiskManager
 from strategy_engine import StrategyEngine
 from metrics_collector import MetricsCollector
 
+# Adicionar integração para dados reais
+from data_integration import DataIntegration
 
 class TradingSystem:
     """Sistema de trading completo v2.0"""
@@ -65,6 +68,8 @@ class TradingSystem:
         self.ticker = self._get_current_contract(datetime.now())
         self.contract_check_time = None
         self.contract_check_interval = 3600  # Verificar a cada hora
+
+        self.data_integration = DataIntegration(self.connection, self.data_loader)
         
         # Threads e queues
         self.ml_queue = queue.Queue(maxsize=10)
@@ -88,6 +93,23 @@ class TradingSystem:
         # Monitor visual (opcional)
         self.monitor = None
         self.use_gui = config.get('use_gui', True)
+
+        # Sistema de otimização contínua (implementação futura)
+        self.continuous_optimizer = None
+        
+        # Auto-otimização (implementação futura)
+        self.auto_optimizer = None
+        
+        # Monitor de performance (implementação futura)
+        self.performance_monitor = None
+        
+        # Auto-retreinamento será configurado após inicialização do model_manager
+        self.auto_retrain_config = {
+            'auto_retrain_enabled': True,
+            'min_retrain_interval_hours': 24,
+            'min_data_points': 1000,
+            'validation_split': 0.2
+        }
 
     def _get_current_contract(self, date: datetime) -> str:
         """
@@ -165,9 +187,14 @@ class TradingSystem:
                 self.logger.error("Falha ao carregar modelos")
                 return False
             self.logger.info(f"[ok] {len(self.model_manager.models)} modelos carregados")
+            self.logger.info(f"[ok] {len(self.model_manager.models)} modelos carregados")
+            
+            # Configurar auto-retreinamento após carregar modelos
+            if hasattr(self.model_manager, 'setup_auto_retraining'):
+                self.model_manager.setup_auto_retraining(self.auto_retrain_config)
+                self.logger.info("[ok] Auto-retreinamento configurado")
             
             # 3. Inicializar estrutura de dados
-            self.logger.info("3. Inicializando estrutura de dados...")
             self.data_structure = TradingDataStructure()
             self.data_structure.initialize_structure()
             self.logger.info("[ok] Estrutura de dados criada")
@@ -240,7 +267,7 @@ class TradingSystem:
     
     def _load_historical_data_safe(self, ticker: str, days_back: int) -> bool:
         """
-        Carrega dados históricos de forma segura usando métodos disponíveis
+        Carrega dados históricos reais do mercado
         
         Args:
             ticker: Símbolo do ativo
@@ -250,69 +277,92 @@ class TradingSystem:
             bool: True se carregou com sucesso
         """
         try:
-            # Por enquanto, gerar dados sintéticos para teste
-            # Em produção, usar API real ou arquivo
-            from datetime import datetime, timedelta
-            import pandas as pd
-            import numpy as np
+            # Verificar modo de operação
+            production_mode = os.getenv('TRADING_ENV', 'development') == 'production'
             
-            # Gerar dados sintéticos
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=days_back)
-            
-            # Criar range de tempo (1 minuto)
-            time_range = pd.date_range(start=start_date, end=end_date, freq='1min')
-            
-            if len(time_range) == 0:
+            if production_mode and not self.connection.market_connected:
+                self.logger.error("PRODUÇÃO: Sem conexão com market data - operação bloqueada")
                 return False
             
-            # Gerar dados OHLCV sintéticos
-            base_price = 5000.0
-            volatility = 0.02
-            
-            # Preços aleatórios mas realistas
-            np.random.seed(42)  # Para reprodutibilidade
-            returns = np.random.normal(0, volatility/100, len(time_range))
-            prices = base_price * np.exp(np.cumsum(returns))
-            
-            # Criar OHLCV
-            candles_data = []
-            for i, timestamp in enumerate(time_range):
-                if i == 0:
-                    open_price = base_price
+            # Opção 1: Carregar de dados reais via ConnectionManager
+            if self.connection and self.connection.market_connected:
+                self.logger.info(f"Carregando dados históricos reais para {ticker}")
+                
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=days_back)
+                
+                # Solicitar dados históricos via DLL
+                result = self.connection.request_historical_data(
+                    ticker=ticker,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                
+                if result >= 0:
+                    self.logger.info("Dados históricos solicitados, aguardando callback...")
+                    # Dados serão recebidos via callback
+                    return True
                 else:
-                    open_price = candles_data[i-1]['close']
+                    self.logger.error(f"Falha ao solicitar dados históricos: código {result}")
+                    
+            # Opção 2: Carregar de cache/arquivo se disponível
+            if self.data_loader:
+                self.logger.info("Tentando carregar dados do cache/arquivo...")
                 
-                close_price = prices[i]
-                high_price = max(open_price, close_price) * (1 + np.random.uniform(0, 0.001))
-                low_price = min(open_price, close_price) * (1 - np.random.uniform(0, 0.001))
-                volume = np.random.uniform(100, 1000)
+                # Usar data_loader para carregar dados reais
+                candles_df = self.data_loader.load_candles(
+                    start_date=datetime.now() - timedelta(days=days_back),
+                    end_date=datetime.now(),
+                    interval='1min',
+                    symbol=ticker
+                )
                 
-                candles_data.append({
-                    'timestamp': timestamp,
-                    'open': open_price,
-                    'high': high_price, 
-                    'low': low_price,
-                    'close': close_price,
-                    'volume': volume
-                })
+                if not candles_df.empty:
+                    # Atualizar estrutura de dados
+                    self.data_structure.update_candles(candles_df)
+                    self.logger.info(f"Dados carregados do cache: {len(candles_df)} candles")
+                    return True
+                
+            # Opção 3: Modo desenvolvimento com aviso claro
+            if not production_mode:
+                self.logger.warning("MODO DESENVOLVIMENTO - Carregando dados de teste isolados")
+                return self._load_test_data_isolated(ticker, days_back)
             
-            # Converter para DataFrame e atualizar estrutura
-            candles_df = pd.DataFrame(candles_data)
-            candles_df.set_index('timestamp', inplace=True)
-            
-            # Atualizar estrutura de dados
-            if self.data_structure:
-                self.data_structure.update_candles(candles_df)
-            else:
-                self.logger.error("Data structure não inicializada")
-            
-            self.logger.info(f"Dados sintéticos gerados: {len(candles_df)} candles")
-            return True
+            # Em produção, falhar se não há dados reais
+            self.logger.error("Nenhuma fonte de dados reais disponível")
+            return False
             
         except Exception as e:
             self.logger.error(f"Erro carregando dados históricos: {e}")
             return False
+
+    def _load_test_data_isolated(self, ticker: str, days_back: int) -> bool:
+        """
+        Carrega dados de teste APENAS em desenvolvimento
+        Isolado para não contaminar produção
+        """
+        # Verificar dupla que não está em produção
+        if os.getenv('TRADING_ENV') == 'production':
+            raise RuntimeError("_load_test_data_isolated chamado em PRODUÇÃO!")
+        
+        # Tentar carregar de arquivo de teste
+        test_file = f"tests/data/{ticker}_test_data.csv"
+        if os.path.exists(test_file):
+            import pandas as pd
+            test_df = pd.read_csv(test_file, parse_dates=['timestamp'], index_col='timestamp')
+            
+            # Filtrar período
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days_back)
+            test_df = test_df[start_date:end_date]
+            
+            if not test_df.empty:
+                self.data_structure.update_candles(test_df)
+                self.logger.info(f"Dados de teste carregados: {len(test_df)} candles")
+                return True
+        
+        self.logger.error("Nenhum dado de teste disponível")
+        return False
         
     def _setup_callbacks(self):
         """Configura callbacks para dados em tempo real"""
@@ -481,14 +531,22 @@ class TradingSystem:
             return
             
         try:
-            # Verificar se processador está disponível
-            if not self.real_time_processor:
-                self.logger.warning("Real time processor não disponível")
-                return
+            # Usar data_integration para criar candles reais
+            if self.data_integration:
+                # Processar trade para formar candles
+                self.data_integration._on_trade(trade_data)
                 
-            # Processar trade
-            self.real_time_processor.process_trade(trade_data)
+                # Obter candles atualizados
+                current_candles = self.data_integration.get_candles('1min')
+                if not current_candles.empty:
+                    self.data_structure.update_candles(current_candles)
             
+            # Processar com real time processor se disponível
+            elif self.real_time_processor:
+                self.real_time_processor.process_trade(trade_data)
+            else:
+                self.logger.warning("Nenhum processador de dados disponível")
+                
             # Atualizar métricas se disponível
             if self.metrics:
                 self.metrics.record_trade()

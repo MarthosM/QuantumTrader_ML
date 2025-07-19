@@ -407,3 +407,36 @@ class ConnectionManager:
         except Exception as e:
             self.logger.error(f"Erro ao obter informações de conta: {e}")
             return False
+        
+    def _validate_market_data(self, data: Dict) -> bool:
+        """
+        Valida que dados são reais e não dummy
+        
+        Args:
+            data: Dados recebidos do broker
+            
+        Returns:
+            bool: True se dados são válidos
+        """
+        # Em produção, validação rigorosa
+        if os.getenv('TRADING_ENV') == 'PRODUCTION':
+            # Verificar fonte
+            if not self.market_connected:
+                self.logger.error("Dados recebidos sem conexão de market data")
+                return False
+                
+            # Verificar timestamp
+            if 'timestamp' in data:
+                data_age = (datetime.now() - data['timestamp']).total_seconds()
+                if data_age > 5:  # Mais de 5 segundos
+                    self.logger.error(f"Dados muito antigos: {data_age}s")
+                    return False
+            
+            # Verificar valores suspeitos
+            if 'price' in data:
+                # WDO tem preços típicos entre 4000-6000
+                if data['price'] < 3000 or data['price'] > 10000:
+                    self.logger.error(f"Preço suspeito para WDO: {data['price']}")
+                    return False
+        
+        return True
