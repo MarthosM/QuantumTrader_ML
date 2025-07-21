@@ -6,6 +6,8 @@ Gerencia risco das operações de trading
 from typing import Dict, Tuple, List, Optional
 from datetime import datetime, timedelta
 import logging
+import pandas as pd
+from intelligent_risk_manager import IntelligentRiskManager  # Importar o novo gerenciador de risco
 
 
 class RiskManager:
@@ -30,7 +32,7 @@ class RiskManager:
         # Controles de posição
         self.position_sizing_method = config.get('position_sizing', 'fixed')
         self.max_correlation = config.get('max_correlation', 0.7)
-        
+        self.intelligent_risk = IntelligentRiskManager(config)
         # Estado
         self.open_positions = []
         self.closed_positions = []
@@ -103,7 +105,76 @@ class RiskManager:
         
         self.logger.info("[RISK] Sinal aprovado")
         return True, "approved"
-    
+
+    # Adicionar novo método após validate_signal (aproximadamente linha 150)
+    def validate_signal_ml(self, signal: Dict, market_data: pd.DataFrame, 
+                        portfolio_state: Dict, account_state: Dict) -> Dict:
+        """Validação avançada de sinal usando ML"""
+        
+        # 1. Avaliação ML de risco
+        risk_assessment = self.intelligent_risk.comprehensive_risk_assessment(
+            signal, market_data, portfolio_state
+        )
+        
+        # 2. Se aprovado, calcular position sizing
+        if risk_assessment['approved']:
+            position_sizing = self.intelligent_risk.dynamic_position_sizing(
+                signal, risk_assessment, account_state
+            )
+            signal['recommended_size'] = position_sizing['position_size']
+            signal['risk_metrics'] = position_sizing['risk_metrics']
+        else:
+            signal['rejected'] = True
+            signal['rejection_reason'] = risk_assessment.get('rejection_reason', 'Risk limit exceeded')
+            
+        # 3. Calcular stop loss otimizado
+        if risk_assessment['approved']:
+            position_mock = {
+                'entry_price': signal['entry_price'],
+                'current_price': signal['entry_price'],
+                'side': signal['side'],
+                'quantity': position_sizing['position_size']
+            }
+            
+            stop_optimization = self.intelligent_risk.optimize_stop_loss(
+                position_mock, market_data, signal.get('market_regime', 'normal')
+            )
+            
+            signal['stop_loss'] = stop_optimization['stop_loss']
+            signal['stop_strategy'] = stop_optimization['strategy_used']
+        
+        return {
+            'signal': signal,
+            'risk_assessment': risk_assessment,
+            'approved': risk_assessment['approved']
+        }
+
+    # Adicionar método para atualizar stops dinamicamente
+    def update_stop_losses(self, open_positions: Dict, market_data: pd.DataFrame):
+        """Atualiza stop losses de todas as posições abertas"""
+        
+        updated_stops = {}
+        
+        for position_id, position in open_positions.items():
+            try:
+                # Detectar regime atual
+                market_regime = self._detect_current_regime(market_data)
+                
+                # Otimizar stop
+                stop_result = self.intelligent_risk.optimize_stop_loss(
+                    position, market_data, market_regime
+                )
+                
+                # Verificar se deve atualizar
+                if self._should_update_stop(position, stop_result):
+                    updated_stops[position_id] = stop_result
+                    self.logger.info(f"Stop atualizado para posição {position_id}: {stop_result['stop_loss']}")
+                    
+            except Exception as e:
+                self.logger.error(f"Erro atualizando stop para {position_id}: {e}")
+                
+        return updated_stops
+
     def register_position(self, position: Dict):
         """Registra nova posição aberta"""
         position_copy = position.copy()
@@ -288,8 +359,83 @@ class RiskManager:
                 peak = pnl
             drawdown = (peak - pnl) / peak if peak > 0 else 0
             max_dd = max(max_dd, drawdown)
-        
         return max_dd
+    
+    def _detect_current_regime(self, market_data: pd.DataFrame) -> str:
+        """
+        Detecta o regime atual do mercado baseado em indicadores técnicos
+        
+        Args:
+            market_data: DataFrame com dados de mercado (deve conter EMAs e ADX)
+            
+        Returns:
+            str: Regime detectado ('trend_up', 'trend_down', 'range', 'undefined')
+        """
+        try:
+            if market_data.empty or len(market_data) < 50:
+                return 'undefined'
+            
+            # Pegar dados mais recentes
+            latest = market_data.iloc[-1]
+            
+            # Verificar se as colunas necessárias existem
+            required_cols = ['ema_9', 'ema_20', 'ema_50', 'adx']
+            if not all(col in market_data.columns for col in required_cols):
+                self.logger.warning("[RISK] Colunas necessárias para detecção de regime não encontradas")
+                return 'undefined'
+            
+            ema_9 = latest['ema_9']
+            ema_20 = latest['ema_20']  
+            ema_50 = latest['ema_50']
+            adx = latest['adx']
+            
+            # Detectar tendência baseado em alinhamento de EMAs e ADX
+            if adx > 25:  # Mercado em tendência
+                if ema_9 > ema_20 > ema_50:
+                    return 'trend_up'
+                elif ema_9 < ema_20 < ema_50:
+                    return 'trend_down'
+            elif adx < 25:  # Mercado lateral
+                # Verificar se EMAs estão próximas (sinal de lateralização)
+                ema_spread = abs(ema_9 - ema_50) / ema_20
+                if ema_spread < 0.01:  # EMAs próximas (1% de diferença)
+                    return 'range'
+            
+            return 'undefined'
+            
+        except Exception as e:
+            self.logger.error(f"[RISK] Erro na detecção de regime: {e}")
+            return 'undefined'
+    
+    def _should_update_stop(self, position: Dict, stop_result: Dict) -> bool:
+        """
+        Verifica se o stop loss deve ser atualizado
+        
+        Args:
+            position: Posição atual
+            stop_result: Resultado da otimização do stop
+            
+        Returns:
+            bool: True se deve atualizar
+        """
+        try:
+            current_stop = position.get('stop_loss', 0)
+            new_stop = stop_result.get('stop_loss', 0)
+            
+            if not current_stop or not new_stop:
+                return False
+            
+            # Só atualizar se o novo stop for mais favorável (trailing stop)
+            if position.get('side') == 'buy':
+                # Para posição comprada, só mover stop para cima
+                return new_stop > current_stop
+            else:
+                # Para posição vendida, só mover stop para baixo  
+                return new_stop < current_stop
+                
+        except Exception as e:
+            self.logger.error(f"[RISK] Erro verificando atualização de stop: {e}")
+            return False
     
     def _calculate_sharpe_ratio(self) -> float:
         """Calcula Sharpe Ratio simplificado"""

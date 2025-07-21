@@ -31,9 +31,6 @@ class ConnectionManager:
         self.callbacks = {}
         self.logger = logging.getLogger('ConnectionManager')
         
-        # OTIMIZAÇÃO: Configurar logging para reduzir spam no terminal
-        self._configure_optimal_logging()
-        
         # Estados de conexão (baseado em enhanced_historical.py)
         self.market_connected = False
         self.broker_connected = False
@@ -62,83 +59,6 @@ class ConnectionManager:
         
         # Contadores para debug
         self._historical_data_count = 0
-    
-    def _configure_optimal_logging(self):
-        """
-        Configura logging otimizado para evitar spam no terminal
-        Especialmente importante durante carregamento de dados históricos
-        """
-        try:
-            # Configurar nível ROOT como WARNING para reduzir spam geral
-            root_logger = logging.getLogger()
-            if not root_logger.handlers:
-                root_logger.setLevel(logging.WARNING)
-            
-            # Componentes que podem gerar muito spam - configurar como ERROR apenas
-            spam_components = [
-                'FeatureEngine',
-                'ProductionDataValidator',
-                'TechnicalIndicators',
-                'MLFeatures',
-                'RealTimeProcessor',
-                'DataPipeline'
-            ]
-            
-            for component in spam_components:
-                spam_logger = logging.getLogger(component)
-                spam_logger.setLevel(logging.ERROR)
-            
-            # ConnectionManager e componentes essenciais mantêm INFO
-            essential_components = [
-                'ConnectionManager',
-                'TradingSystem',
-                'DataIntegration'
-            ]
-            
-            for component in essential_components:
-                essential_logger = logging.getLogger(component)
-                essential_logger.setLevel(logging.INFO)
-            
-            self.logger.info("🔧 Logging otimizado configurado - redução de spam ativada")
-            
-        except Exception as e:
-            # Não falhar se houver problema com logging
-            print(f"Aviso: Erro configurando logging otimizado: {e}")
-        
-    def configure_production_logging(self):
-        """
-        Configuração específica para ambiente de produção
-        Chame este método para logging ainda mais limpo
-        """
-        try:
-            # Em produção, apenas WARNING e ERROR
-            production_components = [
-                'ConnectionManager',
-                'TradingSystem', 
-                'DataIntegration',
-                'FeatureEngine',
-                'ProductionDataValidator'
-            ]
-            
-            for component in production_components:
-                prod_logger = logging.getLogger(component)
-                prod_logger.setLevel(logging.WARNING)
-            
-            self.logger.warning("⚡ Modo produção ativado - logging mínimo")
-            
-        except Exception as e:
-            print(f"Erro configurando modo produção: {e}")
-        
-    def get_logging_stats(self) -> dict:
-        """Retorna estatísticas de logging atual"""
-        return {
-            'historical_data_count': self._historical_data_count,
-            'connection_state': {
-                'connected': self.connected,
-                'market_connected': self.market_connected,
-                'login_state': self.login_state
-            }
-        }
         
     def initialize(self, key: str, username: str, password: str, 
                   account_id: Optional[str] = None, broker_id: Optional[str] = None, 
@@ -301,7 +221,7 @@ class ConnectionManager:
             except Exception as e:
                 self.logger.error(f"Erro no trade callback: {e}")
         
-        # History trade callback - IMPLEMENTAÇÃO CRÍTICA COM LOG OTIMIZADO
+        # History trade callback - IMPLEMENTAÇÃO CRÍTICA
         @WINFUNCTYPE(None, TAssetID, c_wchar_p, c_uint, c_double, c_double,
                      c_int, c_int, c_int, c_int)
         def history_callback(asset_id, date, trade_number, price, vol, qtd,
@@ -309,50 +229,20 @@ class ConnectionManager:
             try:
                 # Este callback recebe os dados históricos!
                 ticker_name = asset_id.pwcTicker if asset_id and asset_id.pwcTicker else 'N/A'
-                
-                # CORREÇÃO: Fazer parsing correto do timestamp
-                try:
-                    # Tentar diferentes formatos de data que podem vir da DLL
-                    date_str = str(date) if date else ""
-                    
-                    if date_str:
-                        # Formatos possíveis da ProfitDLL
-                        for fmt in ['%d/%m/%Y %H:%M:%S.%f', '%d/%m/%Y %H:%M:%S', 
-                                   '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S']:
-                            try:
-                                timestamp = datetime.strptime(date_str, fmt)
-                                break
-                            except ValueError:
-                                continue
-                        else:
-                            # Se nenhum formato funcionou, usar timestamp atual
-                            if self._historical_data_count < 5:  # Log apenas nos primeiros
-                                self.logger.warning(f"Formato de data não reconhecido: {date_str}")
-                            timestamp = datetime.now()
-                    else:
-                        timestamp = datetime.now()
-                        
-                except Exception as e:
-                    if self._historical_data_count < 5:  # Log apenas nos primeiros
-                        self.logger.error(f"Erro no parsing de timestamp: {e}")
-                    timestamp = datetime.now()
-                
-                # LOG OTIMIZADO - apenas marcos importantes para evitar spam
-                if self._historical_data_count == 0:
-                    self.logger.info(f"📈 PRIMEIRO DADO HISTÓRICO: {ticker_name}")
-                elif self._historical_data_count in [100, 500, 1000, 5000, 10000, 50000, 100000]:
-                    rate = (self._historical_data_count / max(1, (datetime.now() - datetime.fromtimestamp(time.time() - 10)).total_seconds()))
-                    self.logger.info(f"📊 {self._historical_data_count} dados recebidos... ({rate:.0f}/s)")
-                elif self._historical_data_count % 10000 == 0:
-                    self.logger.info(f"� {self._historical_data_count} dados históricos processados")
+                self.logger.info(f"📈 DADO HISTÓRICO RECEBIDO: {ticker_name}")
+                self.logger.debug(f"   Data: {date}, Preço: {price}, Volume: {vol}, Qtd: {qtd}")
                 
                 # Incrementar contador
                 self._historical_data_count += 1
                 
+                # Log a cada 100 trades para acompanhar o progresso
+                if self._historical_data_count % 100 == 0:
+                    self.logger.info(f"📊 {self._historical_data_count} dados históricos recebidos...")
+                
                 # Notificar callbacks registrados sobre novo dado histórico
                 for callback in self.trade_callbacks:
                     callback({
-                        'timestamp': timestamp,  # Usar timestamp processado
+                        'timestamp': date,
                         'ticker': ticker_name,
                         'price': float(price),
                         'volume': float(vol),
@@ -788,13 +678,13 @@ class ConnectionManager:
             self.logger.error(f"Stack trace: {traceback.format_exc()}")
             return -1
     
-    def wait_for_historical_data(self, timeout_seconds: int = 60) -> bool:
+    def wait_for_historical_data(self, timeout_seconds: int = 30) -> bool:
         """
         Aguarda os dados históricos chegarem via callback
-        PROTEÇÃO CONTRA LOOPS - timeout aumentado para 60s para dados históricos
+        PROTEÇÃO CONTRA LOOPS - timeout reduzido para 30s
         
         Args:
-            timeout_seconds: Timeout em segundos (padrão 60s para dados históricos)
+            timeout_seconds: Timeout em segundos (padrão 30s para evitar loops)
             
         Returns:
             bool: True se dados foram recebidos, False se timeout
@@ -804,7 +694,6 @@ class ConnectionManager:
             last_count = self._historical_data_count
             stable_count = 0
             no_data_count = 0
-            last_log_time = 0
             
             self.logger.info(f"⏳ Aguardando dados históricos (timeout: {timeout_seconds}s)...")
             self.logger.info(f"📊 Contador inicial: {self._historical_data_count}")
@@ -818,36 +707,25 @@ class ConnectionManager:
                     last_count = current_count
                     stable_count = 0
                     no_data_count = 0
-                    
-                    # Log apenas a cada 5 segundos para evitar spam
-                    if elapsed - last_log_time >= 5:
-                        rate = (current_count / elapsed) if elapsed > 0 else 0
-                        self.logger.info(f"📈 {current_count} dados recebidos... ({elapsed:.1f}s, {rate:.0f} trades/s)")
-                        last_log_time = elapsed
-                        
+                    self.logger.info(f"📈 {current_count} dados recebidos... ({elapsed:.1f}s)")
                 else:
                     # Dados estáveis, contar tempo
                     stable_count += 1
                     no_data_count += 1
                     
-                    # PROTEÇÃO 1: Se estável por 5 segundos e temos dados, considerar completo
-                    if stable_count >= 10 and current_count > 0:  # 10 * 0.5s = 5s
-                        self.logger.info(f"✅ Dados históricos carregados: {current_count} registros em {elapsed:.1f}s")
-                        
-                        # NOVO: Notificar callbacks sobre fim do carregamento histórico
-                        self._notify_historical_data_complete()
-                        
+                    # PROTEÇÃO 1: Se estável por 3 segundos e temos dados, considerar completo
+                    if stable_count >= 6 and current_count > 0:  # 6 * 0.5s = 3s
+                        self.logger.info(f"✅ Dados estabilizaram em {current_count} registros após {elapsed:.1f}s")
                         return True
                     
-                    # PROTEÇÃO 2: Se passou 15 segundos sem dados, desistir
-                    if no_data_count >= 30 and current_count == 0:  # 30 * 0.5s = 15s
-                        self.logger.warning(f"⚠️ 15 segundos sem dados - assumindo que não há dados disponíveis")
+                    # PROTEÇÃO 2: Se passou 10 segundos sem dados, desistir
+                    if no_data_count >= 20 and current_count == 0:  # 20 * 0.5s = 10s
+                        self.logger.warning(f"⚠️ 10 segundos sem dados - assumindo que não há dados disponíveis")
                         return False
                     
-                    # PROTEÇÃO 3: Log periódico menos frequente
-                    if int(elapsed) % 10 == 0 and int(elapsed) > 0 and elapsed - last_log_time >= 10:
+                    # PROTEÇÃO 3: Log periódico para monitorar progresso
+                    if int(elapsed) % 5 == 0 and int(elapsed) > 0:
                         self.logger.info(f"⏳ Aguardando... {current_count} dados recebidos em {elapsed:.0f}s")
-                        last_log_time = elapsed
                 
                 time.sleep(0.5)
             
@@ -857,10 +735,6 @@ class ConnectionManager:
             
             if final_count > 0:
                 self.logger.warning(f"⚠️ Timeout após {elapsed_final:.1f}s, mas {final_count} dados foram recebidos")
-                
-                # NOVO: Mesmo com timeout, notificar fim do carregamento se temos dados
-                self._notify_historical_data_complete()
-                
                 return True
             else:
                 self.logger.error(f"❌ Timeout após {elapsed_final:.1f}s sem nenhum dado recebido")
@@ -869,28 +743,6 @@ class ConnectionManager:
         except Exception as e:
             self.logger.error(f"Erro aguardando dados históricos: {e}")
             return False
-    
-    def _notify_historical_data_complete(self):
-        """
-        Notifica que o carregamento de dados históricos foi completado
-        """
-        try:
-            self.logger.info("🎉 Carregamento de dados históricos FINALIZADO!")
-            
-            # Notificar todos os callbacks registrados sobre conclusão
-            for callback in self.trade_callbacks:
-                # Enviar sinal especial de conclusão
-                try:
-                    callback({
-                        'event_type': 'historical_data_complete',
-                        'total_records': self._historical_data_count,
-                        'timestamp': datetime.now()
-                    })
-                except Exception as e:
-                    self.logger.debug(f"Callback não suporta evento de conclusão: {e}")
-                    
-        except Exception as e:
-            self.logger.error(f"Erro notificando fim dos dados históricos: {e}")
     
     def unsubscribe_ticker(self, ticker: str) -> bool:
         """

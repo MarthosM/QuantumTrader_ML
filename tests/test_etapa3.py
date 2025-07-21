@@ -6,7 +6,7 @@ import sys
 import os
 
 # Adicionar diretório src ao path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from data_structure import TradingDataStructure
 from technical_indicators import TechnicalIndicators

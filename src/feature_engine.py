@@ -1974,17 +1974,3 @@ class FeatureEngine:
         
         self.feature_selection_interval = seconds
         self.logger.info(f"Intervalo de seleção de features: {seconds} segundos")
-    
-    def set_production_mode(self, enabled: bool = True):
-        """Ativa/desativa modo produção com validações rigorosas"""
-        
-        self.production_mode = enabled
-        self.require_validation = enabled
-        self.block_on_dummy_data = enabled
-        
-        # Propagar para componentes
-        self.advanced_processor.production_mode = enabled
-        self.advanced_processor.require_data_validation = enabled
-        
-        mode = "PRODUÇÃO" if enabled else "DESENVOLVIMENTO"
-        self.logger.info(f"Sistema configurado para modo {mode}")
