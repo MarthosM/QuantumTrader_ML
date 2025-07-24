@@ -36,6 +36,9 @@ class TradingMonitorGUI:
         self.running = False
         self.update_interval = 1  # segundos
         
+        # Setup do logger
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
         # Buffers para dados históricos (últimos 100 registros)
         self.predictions_history = deque(maxlen=100)
         self.candles_history = deque(maxlen=100)
@@ -72,8 +75,25 @@ class TradingMonitorGUI:
     def _setup_window(self):
         """Configura janela principal"""
         self.root.title("Trading System ML v2.0 - Monitor")
-        self.root.geometry("1200x800")
+        
+        # Ajustar tamanho para melhor visualização
+        # Detectar resolução da tela
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Definir tamanho otimizado (80% da tela ou máximo de 1400x950) - altura aumentada
+        window_width = min(int(screen_width * 0.8), 1400)
+        window_height = min(int(screen_height * 0.85), 950)
+        
+        # Centralizar janela
+        pos_x = (screen_width - window_width) // 2
+        pos_y = (screen_height - window_height) // 2
+        
+        self.root.geometry(f"{window_width}x{window_height}+{pos_x}+{pos_y}")
         self.root.resizable(True, True)
+        
+        # Definir tamanho mínimo (altura aumentada)
+        self.root.minsize(1000, 700)
         
         # Configurar para fechar adequadamente
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
@@ -89,53 +109,119 @@ class TradingMonitorGUI:
         """Configura estilos visuais"""
         self.style = ttk.Style()
         
-        # Cores do tema
+        # Cores do tema (otimizadas para melhor visibilidade)
         self.colors = {
-            'profit': '#00FF00',
-            'loss': '#FF0000',
-            'neutral': '#FFFF00',
-            'bg_dark': '#2b2b2b',
-            'bg_light': '#404040',
-            'text': '#FFFFFF',
-            'accent': '#007ACC'
+            'profit': '#00C851',      # Verde mais suave
+            'loss': '#FF4444',        # Vermelho mais suave
+            'neutral': '#33B5E5',     # Azul claro ao invés de amarelo
+            'warning': '#FF8800',     # Laranja para avisos
+            'bg_dark': '#1E1E1E',     # Fundo escuro
+            'bg_light': '#2D2D2D',    # Fundo claro
+            'text': '#E0E0E0',        # Texto cinza claro ao invés de branco
+            'text_dark': '#B0B0B0',   # Texto secundário
+            'accent': '#0078D4',      # Azul Microsoft
+            'border': '#404040'       # Bordas
         }
         
-        # Configurar fontes
+        # Configurar tema escuro profissional
+        self._configure_dark_theme()
+        
+        # Configurar fontes (tamanhos otimizados)
         self.fonts = {
-            'title': font.Font(family='Arial', size=14, weight='bold'),
-            'data': font.Font(family='Courier', size=10),
-            'status': font.Font(family='Arial', size=12, weight='bold')
+            'title': font.Font(family='Segoe UI', size=12, weight='bold'),
+            'data': font.Font(family='Consolas', size=9),
+            'status': font.Font(family='Segoe UI', size=10, weight='bold'),
+            'small': font.Font(family='Segoe UI', size=8),
+            'header': font.Font(family='Segoe UI', size=11, weight='bold')
         }
+        
+    def _configure_dark_theme(self):
+        """Configura tema escuro profissional"""
+        try:
+            # Configurar tema escuro para TTK
+            self.style.theme_use('clam')
+            
+            # Configurar cores para widgets TTK
+            self.style.configure('TLabel', 
+                               background=self.colors['bg_dark'],
+                               foreground=self.colors['text'])
+            
+            self.style.configure('TFrame', 
+                               background=self.colors['bg_dark'],
+                               borderwidth=1,
+                               relief='flat')
+            
+            self.style.configure('TLabelFrame', 
+                               background=self.colors['bg_dark'],
+                               foreground=self.colors['accent'],
+                               borderwidth=1,
+                               relief='solid')
+                               
+            self.style.configure('TButton',
+                               background=self.colors['bg_light'],
+                               foreground=self.colors['text'],
+                               borderwidth=1,
+                               focuscolor='none')
+                               
+            # Configurar root background
+            self.root.configure(bg=self.colors['bg_dark'])
+            
+        except Exception as e:
+            self.logger.warning(f"Erro configurando tema escuro: {e}")
         
     def _create_widgets(self):
-        """Cria todos os widgets da interface"""
-        # Frame principal
+        """Cria todos os widgets da interface com layout melhorado"""
+        # Frame principal com melhor espaçamento
         main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
         
-        # === HEADER ===
+        # === HEADER COMPACTO ===
         self._create_header(main_frame)
         
-        # === CONTENT FRAMES ===
+        # === LAYOUT PRINCIPAL REORGANIZADO ===
+        # Usar grid para melhor controle de layout
         content_frame = ttk.Frame(main_frame)
-        content_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        content_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
         
-        # Frame esquerdo (Predições + Candles)
-        left_frame = ttk.LabelFrame(content_frame, text="Dados de Trading", padding=10)
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        # Configurar grid para 3 linhas e 2 colunas
+        content_frame.grid_rowconfigure(0, weight=0)  # Top row - altura fixa
+        content_frame.grid_rowconfigure(1, weight=1)  # Middle row - expansível
+        content_frame.grid_rowconfigure(2, weight=0)  # Bottom row - altura fixa
+        content_frame.grid_columnconfigure(0, weight=1)
+        content_frame.grid_columnconfigure(1, weight=1)
         
-        # Frame direito (Métricas + Alertas)
-        right_frame = ttk.LabelFrame(content_frame, text="Monitoramento", padding=10)
-        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        # === LINHA 1: INFORMAÇÕES PRINCIPAIS ===
+        # Predições ML (coluna 1)
+        pred_frame = ttk.LabelFrame(content_frame, text="🎯 Predições ML", padding=8)
+        pred_frame.grid(row=0, column=0, sticky='ew', padx=(0, 4), pady=(0, 6))
         
-        # Criar seções específicas
-        self._create_prediction_section(left_frame)
-        self._create_candle_section(left_frame)
-        self._create_metrics_section(right_frame)
-        self._create_alerts_section(right_frame)
+        # Status do Sistema (coluna 2)  
+        status_frame = ttk.LabelFrame(content_frame, text="📊 Status Sistema", padding=8)
+        status_frame.grid(row=0, column=1, sticky='ew', padx=(4, 0), pady=(0, 6))
         
-        # === FOOTER ===
-        self._create_footer(main_frame)
+        # === LINHA 2: DADOS PRINCIPAIS ===
+        # Dados de Mercado (coluna 1)
+        market_frame = ttk.LabelFrame(content_frame, text="💹 Dados de Mercado", padding=8)
+        market_frame.grid(row=1, column=0, sticky='nsew', padx=(0, 4), pady=(0, 6))
+        
+        # Métricas e Performance (coluna 2)
+        metrics_frame = ttk.LabelFrame(content_frame, text="📈 Métricas & Performance", padding=8)
+        metrics_frame.grid(row=1, column=1, sticky='nsew', padx=(4, 0), pady=(0, 6))
+        
+        # === LINHA 3: ALERTAS E STATUS ===
+        # Alertas e Log (largura total)
+        alerts_frame = ttk.LabelFrame(content_frame, text="🔔 Alertas & Log do Sistema", padding=6)
+        alerts_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(0, 6))
+        
+        # Criar seções com layout melhorado
+        self._create_prediction_section_improved(pred_frame)
+        self._create_system_status_section_improved(status_frame)
+        self._create_market_data_section_improved(market_frame)
+        self._create_metrics_section_improved(metrics_frame)
+        self._create_alerts_section_improved(alerts_frame)
+        
+        # === FOOTER SIMPLIFICADO ===
+        self._create_footer_improved(main_frame)
         
     def _create_header(self, parent):
         """Cria header com status do sistema"""
@@ -144,151 +230,296 @@ class TradingMonitorGUI:
         
         # Título
         title_label = tk.Label(header_frame, text="Trading System ML v2.0", 
-                              font=self.fonts['title'], fg=self.colors['accent'])
+                              font=self.fonts['title'], fg=self.colors['accent'],
+                              bg=self.colors['bg_dark'])
         title_label.pack(side=tk.LEFT)
         
         # Status
         self.status_label = tk.Label(header_frame, text="Sistema: Inicializando...", 
-                                    font=self.fonts['status'], fg=self.colors['neutral'])
+                                    font=self.fonts['status'], fg=self.colors['neutral'],
+                                    bg=self.colors['bg_dark'])
         self.status_label.pack(side=tk.RIGHT)
         
         # Separador
         ttk.Separator(parent, orient='horizontal').pack(fill=tk.X, pady=5)
         
     def _create_prediction_section(self, parent):
-        """Cria seção de predições ML"""
-        pred_frame = ttk.LabelFrame(parent, text="🎯 Última Predição ML", padding=10)
-        pred_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Grid para organizar dados
-        pred_grid = ttk.Frame(pred_frame)
+        """Cria seção de predições ML (versão compacta)"""
+        # Grid para organizar dados de forma compacta
+        pred_grid = ttk.Frame(parent)
         pred_grid.pack(fill=tk.X)
         
         # Labels para dados da predição
         self.pred_labels = {}
         
         # Linha 1: Direção e Confiança
-        tk.Label(pred_grid, text="Direção:", font=self.fonts['data']).grid(row=0, column=0, sticky='w', padx=(0, 10))
-        self.pred_labels['direction'] = tk.Label(pred_grid, text="-", font=self.fonts['data'], fg=self.colors['neutral'])
-        self.pred_labels['direction'].grid(row=0, column=1, sticky='w', padx=(0, 20))
+        tk.Label(pred_grid, text="Direção:", font=self.fonts['small'], 
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=0, column=0, sticky='w', padx=(0, 5))
+        self.pred_labels['direction'] = tk.Label(pred_grid, text="-", font=self.fonts['data'], 
+                                                fg=self.colors['neutral'], bg=self.colors['bg_dark'])
+        self.pred_labels['direction'].grid(row=0, column=1, sticky='w', padx=(0, 15))
         
-        tk.Label(pred_grid, text="Confiança:", font=self.fonts['data']).grid(row=0, column=2, sticky='w', padx=(0, 10))
-        self.pred_labels['confidence'] = tk.Label(pred_grid, text="-", font=self.fonts['data'])
+        tk.Label(pred_grid, text="Conf:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=0, column=2, sticky='w', padx=(0, 5))
+        self.pred_labels['confidence'] = tk.Label(pred_grid, text="-", font=self.fonts['data'],
+                                                 fg=self.colors['text'], bg=self.colors['bg_dark'])
         self.pred_labels['confidence'].grid(row=0, column=3, sticky='w')
         
-        # Linha 2: Magnitude e Ação
-        tk.Label(pred_grid, text="Magnitude:", font=self.fonts['data']).grid(row=1, column=0, sticky='w', padx=(0, 10))
-        self.pred_labels['magnitude'] = tk.Label(pred_grid, text="-", font=self.fonts['data'])
-        self.pred_labels['magnitude'].grid(row=1, column=1, sticky='w', padx=(0, 20))
+        # Linha 2: Ação e Magnitude
+        tk.Label(pred_grid, text="Ação:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=1, column=0, sticky='w', padx=(0, 5))
+        self.pred_labels['action'] = tk.Label(pred_grid, text="-", font=self.fonts['data'], 
+                                             fg=self.colors['neutral'], bg=self.colors['bg_dark'])
+        self.pred_labels['action'].grid(row=1, column=1, sticky='w', padx=(0, 15))
         
-        tk.Label(pred_grid, text="Ação:", font=self.fonts['data']).grid(row=1, column=2, sticky='w', padx=(0, 10))
-        self.pred_labels['action'] = tk.Label(pred_grid, text="-", font=self.fonts['data'], fg=self.colors['neutral'])
-        self.pred_labels['action'].grid(row=1, column=3, sticky='w')
+        tk.Label(pred_grid, text="Mag:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=1, column=2, sticky='w', padx=(0, 5))
+        self.pred_labels['magnitude'] = tk.Label(pred_grid, text="-", font=self.fonts['data'],
+                                                fg=self.colors['text'], bg=self.colors['bg_dark'])
+        self.pred_labels['magnitude'].grid(row=1, column=3, sticky='w')
         
-        # Linha 3: Regime e Timestamp
-        tk.Label(pred_grid, text="Regime:", font=self.fonts['data']).grid(row=2, column=0, sticky='w', padx=(0, 10))
-        self.pred_labels['regime'] = tk.Label(pred_grid, text="-", font=self.fonts['data'])
+        # Linha 3: Regime
+        tk.Label(pred_grid, text="Regime:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=2, column=0, sticky='w', padx=(0, 5))
+        self.pred_labels['regime'] = tk.Label(pred_grid, text="-", font=self.fonts['data'],
+                                             fg=self.colors['text'], bg=self.colors['bg_dark'])
         self.pred_labels['regime'].grid(row=2, column=1, sticky='w', padx=(0, 20))
         
-        tk.Label(pred_grid, text="Timestamp:", font=self.fonts['data']).grid(row=2, column=2, sticky='w', padx=(0, 10))
-        self.pred_labels['timestamp'] = tk.Label(pred_grid, text="-", font=self.fonts['data'])
+        tk.Label(pred_grid, text="Hora:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=2, column=2, sticky='w', padx=(0, 5))
+        self.pred_labels['timestamp'] = tk.Label(pred_grid, text="-", font=self.fonts['small'],
+                                                fg=self.colors['text_dark'], bg=self.colors['bg_dark'])
         self.pred_labels['timestamp'].grid(row=2, column=3, sticky='w')
         
-    def _create_candle_section(self, parent):
-        """Cria seção de dados do último candle"""
-        candle_frame = ttk.LabelFrame(parent, text="📈 Dados de Mercado em Tempo Real", padding=10)
-        candle_frame.pack(fill=tk.X, pady=(0, 10))
-
-        # === PREÇO ATUAL ===
-        current_price_frame = ttk.LabelFrame(candle_frame, text="💰 Preço Atual", padding=5)
-        current_price_frame.pack(fill=tk.X, pady=(0, 10))
+    def _create_prediction_section_improved(self, parent):
+        """Seção de predições ML com layout melhorado"""
+        # Container principal
+        container = ttk.Frame(parent)
+        container.pack(fill=tk.BOTH, expand=True)
         
-        # Grid para preço atual
-        price_grid = ttk.Frame(current_price_frame)
+        # Labels para predições
+        self.pred_labels = {}
+        
+        # Linha 1: Ação principal (destaque)
+        action_frame = ttk.Frame(container)
+        action_frame.pack(fill=tk.X, pady=(0, 8))
+        
+        tk.Label(action_frame, text="Ação:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).pack(side=tk.LEFT)
+        self.pred_labels['action'] = tk.Label(action_frame, text="AGUARDANDO", 
+                                             font=self.fonts['title'], fg=self.colors['neutral'],
+                                             bg=self.colors['bg_dark'])
+        self.pred_labels['action'].pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Linha 2: Confiança e Magnitude
+        metrics_frame = ttk.Frame(container)
+        metrics_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        # Grid 2x2 para métricas
+        tk.Label(metrics_frame, text="Confiança:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=0, column=0, sticky='w', padx=(0, 8))
+        self.pred_labels['confidence'] = tk.Label(metrics_frame, text="0%", font=self.fonts['data'],
+                                                 fg=self.colors['text'], bg=self.colors['bg_dark'])
+        self.pred_labels['confidence'].grid(row=0, column=1, sticky='w', padx=(0, 20))
+        
+        tk.Label(metrics_frame, text="Magnitude:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=0, column=2, sticky='w', padx=(0, 8))
+        self.pred_labels['magnitude'] = tk.Label(metrics_frame, text="0.000", font=self.fonts['data'],
+                                                fg=self.colors['text'], bg=self.colors['bg_dark'])
+        self.pred_labels['magnitude'].grid(row=0, column=3, sticky='w')
+        
+        # Linha 3: Regime e Timestamp
+        tk.Label(metrics_frame, text="Regime:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=1, column=0, sticky='w', padx=(0, 8))
+        self.pred_labels['regime'] = tk.Label(metrics_frame, text="Detectando...", font=self.fonts['data'],
+                                             fg=self.colors['warning'], bg=self.colors['bg_dark'])
+        self.pred_labels['regime'].grid(row=1, column=1, sticky='w', padx=(0, 20))
+        
+        tk.Label(metrics_frame, text="Última:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=1, column=2, sticky='w', padx=(0, 8))
+        self.pred_labels['timestamp'] = tk.Label(metrics_frame, text="--:--:--", font=self.fonts['small'],
+                                                fg=self.colors['text_dark'], bg=self.colors['bg_dark'])
+        self.pred_labels['timestamp'].grid(row=1, column=3, sticky='w')
+        
+        # Configurar expansão das colunas
+        metrics_frame.grid_columnconfigure(1, weight=1)
+        metrics_frame.grid_columnconfigure(3, weight=1)
+        
+        # Adicionar labels obrigatórios para compatibilidade
+        self.pred_labels['direction'] = self.pred_labels.get('action', self.pred_labels['action'])  # Reuso do action
+        
+        # Label de preço atual (obrigatório)
+        price_frame = ttk.Frame(container)
+        price_frame.pack(fill=tk.X, pady=4)
+        
+        tk.Label(price_frame, text="Preço Atual:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).pack(side=tk.LEFT)
+        self.current_price_label = tk.Label(price_frame, text="R$ -.--", font=self.fonts['data'],
+                                           fg=self.colors['accent'], bg=self.colors['bg_dark'])
+        self.current_price_label.pack(side=tk.LEFT, padx=(8, 0))
+        
+    def _create_system_status_section(self, parent):
+        """Cria seção de status do sistema (nova)"""
+        # Grid para status
+        status_grid = ttk.Frame(parent)
+        status_grid.pack(fill=tk.X)
+        
+        # Labels para status do sistema
+        self.status_labels = {}
+        
+        # Linha 1: Sistema e Conexão
+        tk.Label(status_grid, text="Sistema:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=0, column=0, sticky='w', padx=(0, 5))
+        self.status_labels['system'] = tk.Label(status_grid, text="Inicializando", font=self.fonts['data'], 
+                                               fg=self.colors['warning'], bg=self.colors['bg_dark'])
+        self.status_labels['system'].grid(row=0, column=1, sticky='w', padx=(0, 15))
+        
+        tk.Label(status_grid, text="Conexão:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=0, column=2, sticky='w', padx=(0, 5))
+        self.status_labels['connection'] = tk.Label(status_grid, text="Offline", font=self.fonts['data'], 
+                                                   fg=self.colors['loss'], bg=self.colors['bg_dark'])
+        self.status_labels['connection'].grid(row=0, column=3, sticky='w')
+        
+        # Linha 2: Ticker e Última Atualização
+        tk.Label(status_grid, text="Ticker:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=1, column=0, sticky='w', padx=(0, 5))
+        self.status_labels['ticker'] = tk.Label(status_grid, text="-", font=self.fonts['data'],
+                                               fg=self.colors['accent'], bg=self.colors['bg_dark'])
+        self.status_labels['ticker'].grid(row=1, column=1, sticky='w', padx=(0, 15))
+        
+        tk.Label(status_grid, text="Atualiz:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=1, column=2, sticky='w', padx=(0, 5))
+        self.status_labels['last_update'] = tk.Label(status_grid, text="-", font=self.fonts['small'],
+                                                    fg=self.colors['text_dark'], bg=self.colors['bg_dark'])
+        self.status_labels['last_update'].grid(row=1, column=3, sticky='w')
+        
+    def _create_candle_section(self, parent):
+        """Cria seção de dados do último candle (versão compacta)"""
+        # Dividir em duas colunas: OHLC + Volume/Tempo
+        main_grid = ttk.Frame(parent)
+        main_grid.pack(fill=tk.BOTH, expand=True)
+        
+        # === COLUNA ESQUERDA: PREÇOS OHLC ===
+        prices_frame = ttk.LabelFrame(main_grid, text="💰 OHLC", padding=3)
+        prices_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 2))
+        
+        # Grid para preços OHLC
+        price_grid = ttk.Frame(prices_frame)
         price_grid.pack(fill=tk.X)
         
-        # Preço atual (destaque)
-        tk.Label(price_grid, text="Preço:", font=self.fonts['title']).grid(row=0, column=0, sticky='w', padx=(0, 10))
-        self.current_price_label = tk.Label(price_grid, text="R$ -.--", font=font.Font(family='Arial', size=16, weight='bold'), 
-                                          fg=self.colors['accent'])
-        self.current_price_label.grid(row=0, column=1, sticky='w', padx=(0, 20))
-        
-        # Variação do dia
-        tk.Label(price_grid, text="Var. Dia:", font=self.fonts['data']).grid(row=0, column=2, sticky='w', padx=(0, 10))
-        self.day_variation_label = tk.Label(price_grid, text="-.--% (R$ -.--)", font=self.fonts['data'])
-        self.day_variation_label.grid(row=0, column=3, sticky='w', padx=(0, 20))
-        
-        # Última atualização do preço
-        tk.Label(price_grid, text="Atualizado:", font=self.fonts['data']).grid(row=0, column=4, sticky='w', padx=(0, 5))
-        self.price_update_time = tk.Label(price_grid, text="--:--:--", font=self.fonts['data'])
-        self.price_update_time.grid(row=0, column=5, sticky='w')
-
-        # === ÚLTIMO CANDLE ===
-        last_candle_frame = ttk.LabelFrame(candle_frame, text="📊 Último Candle (1 min)", padding=5)
-        last_candle_frame.pack(fill=tk.X)
-
-        # Grid para dados do candle
-        candle_grid = ttk.Frame(last_candle_frame)
-        candle_grid.pack(fill=tk.X)
-
+        # Labels para dados OHLC
         self.candle_labels = {}
-
-        # Linha 1: OHLC
-        labels_row1 = ['Open', 'High', 'Low', 'Close']
-        for i, label in enumerate(labels_row1):
-            tk.Label(candle_grid, text=f"{label}:", font=self.fonts['data']).grid(row=0, column=i*2, sticky='w', padx=(0, 5))
-            self.candle_labels[label.lower()] = tk.Label(candle_grid, text="-.--", font=self.fonts['data'], fg=self.colors['text'])
-            self.candle_labels[label.lower()].grid(row=0, column=i*2+1, sticky='w', padx=(0, 15))
-
-        # Linha 2: Volume e Dados adicionais
-        tk.Label(candle_grid, text="Volume:", font=self.fonts['data']).grid(row=1, column=0, sticky='w', padx=(0, 5))
-        self.candle_labels['volume'] = tk.Label(candle_grid, text="-", font=self.fonts['data'])
-        self.candle_labels['volume'].grid(row=1, column=1, sticky='w', padx=(0, 15))
-
-        tk.Label(candle_grid, text="Trades:", font=self.fonts['data']).grid(row=1, column=2, sticky='w', padx=(0, 5))
-        self.candle_labels['trades'] = tk.Label(candle_grid, text="-", font=self.fonts['data'])
-        self.candle_labels['trades'].grid(row=1, column=3, sticky='w', padx=(0, 15))
-
-        tk.Label(candle_grid, text="Var %:", font=self.fonts['data']).grid(row=1, column=4, sticky='w', padx=(0, 5))
-        self.candle_labels['variation'] = tk.Label(candle_grid, text="-.--", font=self.fonts['data'])
-        self.candle_labels['variation'].grid(row=1, column=5, sticky='w', padx=(0, 15))
-
-        # Linha 3: Buy/Sell Volume e Timestamp
-        tk.Label(candle_grid, text="Buy Vol:", font=self.fonts['data']).grid(row=2, column=0, sticky='w', padx=(0, 5))
-        self.candle_labels['buy_volume'] = tk.Label(candle_grid, text="-", font=self.fonts['data'], fg=self.colors['profit'])
-        self.candle_labels['buy_volume'].grid(row=2, column=1, sticky='w', padx=(0, 15))
         
-        tk.Label(candle_grid, text="Sell Vol:", font=self.fonts['data']).grid(row=2, column=2, sticky='w', padx=(0, 5))
-        self.candle_labels['sell_volume'] = tk.Label(candle_grid, text="-", font=self.fonts['data'], fg=self.colors['loss'])
-        self.candle_labels['sell_volume'].grid(row=2, column=3, sticky='w', padx=(0, 15))
-
-        tk.Label(candle_grid, text="Timestamp:", font=self.fonts['data']).grid(row=2, column=4, sticky='w', padx=(0, 5))
-        self.candle_labels['timestamp'] = tk.Label(candle_grid, text="--:--:--", font=self.fonts['data'])
-        self.candle_labels['timestamp'].grid(row=2, column=5, sticky='w')
+        # OHLC em grid compacto
+        ohlc_data = [('Open:', 'open'), ('High:', 'high'), ('Low:', 'low'), ('Close:', 'close')]
+        for i, (label, key) in enumerate(ohlc_data):
+            row = i // 2
+            col = (i % 2) * 2
+            tk.Label(price_grid, text=label, font=self.fonts['small']).grid(row=row, column=col, sticky='w', padx=(0, 3))
+            self.candle_labels[key] = tk.Label(price_grid, text="-.--", font=self.fonts['data'], fg=self.colors['text'])
+            self.candle_labels[key].grid(row=row, column=col+1, sticky='w', padx=(0, 10))
+        
+        # Configurar expansão das colunas
+        main_grid.columnconfigure(0, weight=1)
+        main_grid.columnconfigure(1, weight=1)
+        
+        # === COLUNA DIREITA: VOLUME + STATUS ===
+        info_frame = ttk.LabelFrame(main_grid, text="📊 Info", padding=3)
+        info_frame.grid(row=0, column=1, sticky='nsew', padx=(2, 0))
+        
+        info_grid = ttk.Frame(info_frame)
+        info_grid.pack(fill=tk.X)
+        
+        # Volume e Variação
+        tk.Label(info_grid, text="Volume:", font=self.fonts['small']).grid(row=0, column=0, sticky='w', padx=(0, 3))
+        self.candle_labels['volume'] = tk.Label(info_grid, text="-", font=self.fonts['data'])
+        self.candle_labels['volume'].grid(row=0, column=1, sticky='w', padx=(0, 10))
+        
+        tk.Label(info_grid, text="Var%:", font=self.fonts['small']).grid(row=1, column=0, sticky='w', padx=(0, 3))
+        self.candle_labels['variation'] = tk.Label(info_grid, text="-.--", font=self.fonts['data'])
+        self.candle_labels['variation'].grid(row=1, column=1, sticky='w', padx=(0, 10))
+        
+        # Preço atual (destaque)
+        tk.Label(info_grid, text="Preço:", font=self.fonts['small']).grid(row=3, column=0, sticky='w', padx=(0, 3))
+        self.current_price_label = tk.Label(info_grid, text="R$ -.--", font=self.fonts['data'], fg=self.colors['accent'])
+        self.current_price_label.grid(row=3, column=1, sticky='w', padx=(0, 10))
+        
+        # Timestamp do último candle
+        tk.Label(info_grid, text="Hora:", font=self.fonts['small']).grid(row=2, column=0, sticky='w', padx=(0, 3))
+        self.candle_labels['timestamp'] = tk.Label(info_grid, text="--:--", font=self.fonts['small'])
+        self.candle_labels['timestamp'].grid(row=2, column=1, sticky='w')
         
     def _create_metrics_section(self, parent):
-        """Cria seção de métricas do sistema"""
-        metrics_frame = ttk.LabelFrame(parent, text="📊 Métricas do Sistema", padding=10)
-        metrics_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        """Cria seção de métricas do sistema (versão compacta)"""
+        # Grid principal para métricas
+        metrics_grid = ttk.Frame(parent)
+        metrics_grid.pack(fill=tk.BOTH, expand=True)
         
-        # Notebook para organizar métricas em abas
-        self.metrics_notebook = ttk.Notebook(metrics_frame)
-        self.metrics_notebook.pack(fill=tk.BOTH, expand=True)
+        # === MÉTRICAS DE TRADING (Superior) ===
+        trading_frame = ttk.LabelFrame(metrics_grid, text="📈 Trading", padding=3)
+        trading_frame.grid(row=0, column=0, columnspan=2, sticky='ew', pady=(0, 2))
+        self._create_trading_metrics_compact(trading_frame)
         
-        # Aba Trading
-        trading_frame = ttk.Frame(self.metrics_notebook)
-        self.metrics_notebook.add(trading_frame, text="Trading")
-        self._create_trading_metrics(trading_frame)
+        # === MÉTRICAS DO SISTEMA (Inferior) ===
+        system_frame = ttk.LabelFrame(metrics_grid, text="⚙️ Sistema", padding=3)
+        system_frame.grid(row=1, column=0, columnspan=2, sticky='ew', pady=(2, 0))
+        self._create_system_metrics_compact(system_frame)
         
-        # Aba Sistema
-        system_frame = ttk.Frame(self.metrics_notebook)
-        self.metrics_notebook.add(system_frame, text="Sistema")
-        self._create_system_metrics(system_frame)
+        # Configurar expansão
+        metrics_grid.columnconfigure(0, weight=1)
+        metrics_grid.columnconfigure(1, weight=1)
         
-        # Aba Posições
-        positions_frame = ttk.Frame(self.metrics_notebook)
-        self.metrics_notebook.add(positions_frame, text="Posições")
-        self._create_positions_display(positions_frame)
+    def _create_trading_metrics_compact(self, parent):
+        """Métricas de trading em formato compacto"""
+        trading_grid = ttk.Frame(parent)
+        trading_grid.pack(fill=tk.X)
+        
+        # Labels para métricas de trading
+        self.trading_metrics = {}
+        
+        # Linha 1: PnL e Win Rate
+        tk.Label(trading_grid, text="PnL:", font=self.fonts['small']).grid(row=0, column=0, sticky='w', padx=(0, 3))
+        self.trading_metrics['pnl'] = tk.Label(trading_grid, text="R$ 0.00", font=self.fonts['data'], fg=self.colors['neutral'])
+        self.trading_metrics['pnl'].grid(row=0, column=1, sticky='w', padx=(0, 10))
+        
+        tk.Label(trading_grid, text="Win%:", font=self.fonts['small']).grid(row=0, column=2, sticky='w', padx=(0, 3))
+        self.trading_metrics['win_rate'] = tk.Label(trading_grid, text="0%", font=self.fonts['data'])
+        self.trading_metrics['win_rate'].grid(row=0, column=3, sticky='w')
+        
+        # Linha 2: Trades e Drawdown
+        tk.Label(trading_grid, text="Trades:", font=self.fonts['small']).grid(row=1, column=0, sticky='w', padx=(0, 3))
+        self.trading_metrics['trades'] = tk.Label(trading_grid, text="0", font=self.fonts['data'])
+        self.trading_metrics['trades'].grid(row=1, column=1, sticky='w', padx=(0, 10))
+        
+        tk.Label(trading_grid, text="DD%:", font=self.fonts['small']).grid(row=1, column=2, sticky='w', padx=(0, 3))
+        self.trading_metrics['drawdown'] = tk.Label(trading_grid, text="0%", font=self.fonts['data'])
+        self.trading_metrics['drawdown'].grid(row=1, column=3, sticky='w')
+        
+    def _create_system_metrics_compact(self, parent):
+        """Métricas do sistema em formato compacto"""
+        system_grid = ttk.Frame(parent)
+        system_grid.pack(fill=tk.X)
+        
+        # Labels para métricas do sistema
+        self.system_metrics = {}
+        
+        # Linha 1: CPU e Memória
+        tk.Label(system_grid, text="CPU:", font=self.fonts['small']).grid(row=0, column=0, sticky='w', padx=(0, 3))
+        self.system_metrics['cpu'] = tk.Label(system_grid, text="0%", font=self.fonts['data'])
+        self.system_metrics['cpu'].grid(row=0, column=1, sticky='w', padx=(0, 10))
+        
+        tk.Label(system_grid, text="RAM:", font=self.fonts['small']).grid(row=0, column=2, sticky='w', padx=(0, 3))
+        self.system_metrics['memory'] = tk.Label(system_grid, text="0MB", font=self.fonts['data'])
+        self.system_metrics['memory'].grid(row=0, column=3, sticky='w')
+        
+        # Linha 2: Uptime e Features
+        tk.Label(system_grid, text="Uptime:", font=self.fonts['small']).grid(row=1, column=0, sticky='w', padx=(0, 3))
+        self.system_metrics['uptime'] = tk.Label(system_grid, text="00:00:00", font=self.fonts['small'])
+        self.system_metrics['uptime'].grid(row=1, column=1, sticky='w', padx=(0, 10))
+        
+        tk.Label(system_grid, text="Features:", font=self.fonts['small']).grid(row=1, column=2, sticky='w', padx=(0, 3))
+        self.system_metrics['features'] = tk.Label(system_grid, text="0", font=self.fonts['small'])
+        self.system_metrics['features'].grid(row=1, column=3, sticky='w')
         
     def _create_trading_metrics(self, parent):
         """Cria métricas de trading"""
@@ -353,35 +584,43 @@ class TradingMonitorGUI:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
         
     def _create_alerts_section(self, parent):
-        """Cria seção de alertas"""
-        alerts_frame = ttk.LabelFrame(parent, text="⚠️ Alertas", padding=10)
-        alerts_frame.pack(fill=tk.BOTH, expand=True)
+        """Cria seção de alertas (versão compacta)"""
+        # Listbox compacta para alertas com altura reduzida
+        listbox_frame = ttk.Frame(parent)
+        listbox_frame.pack(fill=tk.X, expand=False)
         
-        # Listbox para alertas
-        listbox_frame = ttk.Frame(alerts_frame)
-        listbox_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.alerts_listbox = tk.Listbox(listbox_frame, font=self.fonts['data'], height=8)
+        self.alerts_listbox = tk.Listbox(listbox_frame, font=self.fonts['small'], height=4)
         alerts_scrollbar = ttk.Scrollbar(listbox_frame, orient='vertical', command=self.alerts_listbox.yview)
         self.alerts_listbox.configure(yscrollcommand=alerts_scrollbar.set)
         
-        self.alerts_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.alerts_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
         alerts_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # Adicionar alertas de exemplo
+        self.alerts_listbox.insert(0, "Sistema iniciado com sucesso")
+        self.alerts_listbox.insert(1, "Aguardando dados do mercado...")
+        
     def _create_footer(self, parent):
-        """Cria footer com controles"""
+        """Cria footer com controles (versão compacta)"""
         footer_frame = ttk.Frame(parent)
-        footer_frame.pack(fill=tk.X, pady=(10, 0))
+        footer_frame.pack(fill=tk.X, pady=(5, 0))
         
         # Separador
-        ttk.Separator(footer_frame, orient='horizontal').pack(fill=tk.X, pady=(0, 10))
+        ttk.Separator(footer_frame, orient='horizontal').pack(fill=tk.X, pady=(0, 5))
         
-        # Botões de controle
+        # Status e controles em linha
         controls_frame = ttk.Frame(footer_frame)
         controls_frame.pack()
         
-        self.start_button = ttk.Button(controls_frame, text="▶ Iniciar Monitor", command=self.start_monitoring)
-        self.start_button.pack(side=tk.LEFT, padx=(0, 10))
+        # Status simplificado
+        self.footer_status = tk.Label(controls_frame, text="Monitor Ativo", 
+                                     font=self.fonts['small'], fg=self.colors['profit'],
+                                     bg=self.colors['bg_dark'])
+        self.footer_status.pack(side=tk.LEFT, padx=(0, 20))
+        
+        # Botões compactos
+        self.start_button = ttk.Button(controls_frame, text="▶ Iniciar", command=self.start_monitoring)
+        self.start_button.pack(side=tk.LEFT, padx=(0, 5))
         
         self.stop_button = ttk.Button(controls_frame, text="⏸ Parar Monitor", command=self.stop_monitoring, state='disabled')
         self.stop_button.pack(side=tk.LEFT, padx=(0, 10))
@@ -562,9 +801,13 @@ class TradingMonitorGUI:
 
             # Atualizar posições
             self._update_positions_display()
+            
+            # Atualizar status do sistema (NOVO)
+            self._update_system_status()
 
             # Atualizar timestamp
-            self.last_update_label.config(text=f"Última atualização: {datetime.now().strftime('%H:%M:%S')}")
+            if hasattr(self, 'last_update_label'):
+                self.last_update_label.config(text=f"Última atualização: {datetime.now().strftime('%H:%M:%S')}")
 
         except Exception as e:
             print(f"Erro atualizando interface: {e}")
@@ -594,14 +837,14 @@ class TradingMonitorGUI:
                 else:
                     var_color = self.colors['neutral']
                     
-                self.day_variation_label.config(text=var_text, fg=var_color)
+                # Variação do dia removida do layout compacto
+                pass
             else:
-                self.day_variation_label.config(text="-.--% (R$ -.--)", fg=self.colors['neutral'])
+                # Variação do dia removida do layout compacto
+                pass
                 
-            # Timestamp da atualização do preço
-            price_update_time = self.current_data.get('price_update_time')
-            if price_update_time:
-                self.price_update_time.config(text=price_update_time.strftime('%H:%M:%S'))
+            # Timestamp da atualização do preço removido do layout compacto
+            # Informação mantida internamente mas não exibida
                 
         except Exception as e:
             print(f"Erro atualizando preço atual: {e}")
@@ -655,23 +898,8 @@ class TradingMonitorGUI:
             volume = candle.get('volume', 0)
             self.candle_labels['volume'].config(text=f"{int(volume):,}")
             
-            # Número de trades
-            trades = candle.get('trades', 0)
-            self.candle_labels['trades'].config(text=f"{int(trades):,}")
-
-            # Buy Volume (se disponível)
-            buy_volume = candle.get('buy_volume', 0)
-            if buy_volume > 0:
-                self.candle_labels['buy_volume'].config(text=f"{int(buy_volume):,}")
-            else:
-                self.candle_labels['buy_volume'].config(text="-")
-                
-            # Sell Volume (se disponível) 
-            sell_volume = candle.get('sell_volume', 0)
-            if sell_volume > 0:
-                self.candle_labels['sell_volume'].config(text=f"{int(sell_volume):,}")
-            else:
-                self.candle_labels['sell_volume'].config(text="-")
+            # Buy/Sell Volume removidos do layout compacto para economia de espaço
+            # Funcionalidade mantida internamente mas não exibida na interface
 
             # Variação do candle
             open_price = candle.get('open', 0)
@@ -695,10 +923,13 @@ class TradingMonitorGUI:
             # Se não há dados, limpar campos
             for field in ['open', 'high', 'low', 'close']:
                 self.candle_labels[field].config(text="-.--")
-            for field in ['volume', 'trades', 'buy_volume', 'sell_volume']:
-                self.candle_labels[field].config(text="-")
+            # Limpar apenas campos que existem no layout compacto
+            if 'volume' in self.candle_labels:
+                self.candle_labels['volume'].config(text="-")
+            # Campos removidos do layout compacto: trades, buy_volume, sell_volume
             self.candle_labels['variation'].config(text="-.--", fg=self.colors['neutral'])
-            self.candle_labels['timestamp'].config(text="--:--:--")
+            if 'timestamp' in self.candle_labels:
+                self.candle_labels['timestamp'].config(text="--:--")
                     
     def _update_metrics_display(self):
         """Atualiza métricas"""
@@ -706,44 +937,63 @@ class TradingMonitorGUI:
         trading_metrics = self.current_data.get('trading_metrics', {})
         account_info = self.current_data.get('account_info', {})
         
-        # P&L Diário
+        # P&L Diário (layout compacto usa 'pnl' ao invés de 'daily_pnl')
         daily_pnl = trading_metrics.get('pnl', 0)
         pnl_text = f"R$ {daily_pnl:,.2f}"
         pnl_color = self.colors['profit'] if daily_pnl > 0 else self.colors['loss'] if daily_pnl < 0 else self.colors['neutral']
-        self.trading_metrics['daily_pnl'].config(text=pnl_text, fg=pnl_color)
+        if 'pnl' in self.trading_metrics:
+            self.trading_metrics['pnl'].config(text=pnl_text, fg=pnl_color)
         
-        # Outras métricas de trading
-        self.trading_metrics['trades_today'].config(text=str(trading_metrics.get('trades_count', 0)))
+        # Outras métricas de trading (layout compacto usa 'trades' ao invés de 'trades_today')
+        if 'trades' in self.trading_metrics:
+            self.trading_metrics['trades'].config(text=str(trading_metrics.get('trades_count', 0)))
         
         win_rate = trading_metrics.get('win_rate', 0)
-        self.trading_metrics['win_rate'].config(text=f"{win_rate:.1%}")
+        if 'win_rate' in self.trading_metrics:
+            self.trading_metrics['win_rate'].config(text=f"{win_rate:.1%}")
         
-        self.trading_metrics['active_positions'].config(text=str(trading_metrics.get('positions', 0)))
-        self.trading_metrics['balance'].config(text=f"R$ {account_info.get('balance', 0):,.2f}")
-        self.trading_metrics['available'].config(text=f"R$ {account_info.get('available', 0):,.2f}")
+        # Proteger referências a métricas que podem não existir no layout compacto
+        if 'active_positions' in self.trading_metrics:
+            self.trading_metrics['active_positions'].config(text=str(trading_metrics.get('positions', 0)))
+        if 'balance' in self.trading_metrics:
+            self.trading_metrics['balance'].config(text=f"R$ {account_info.get('balance', 0):,.2f}")
+        if 'available' in self.trading_metrics:
+            self.trading_metrics['available'].config(text=f"R$ {account_info.get('available', 0):,.2f}")
+        if 'drawdown' in self.trading_metrics:
+            drawdown = trading_metrics.get('drawdown', 0)
+            self.trading_metrics['drawdown'].config(text=f"{drawdown:.1%}")
         
-        # System metrics
+        # System metrics (proteger referências do layout compacto)
         system_metrics = self.current_data.get('system_metrics', {})
         
-        self.system_metrics['cpu_percent'].config(text=f"{system_metrics.get('cpu_percent', 0):.1f}%")
-        self.system_metrics['memory_mb'].config(text=f"{system_metrics.get('memory_mb', 0):.1f} MB")
-        self.system_metrics['threads'].config(text=str(system_metrics.get('threads', 0)))
+        if 'cpu' in self.system_metrics:
+            self.system_metrics['cpu'].config(text=f"{system_metrics.get('cpu_percent', 0):.1f}%")
+        if 'memory' in self.system_metrics:
+            self.system_metrics['memory'].config(text=f"{system_metrics.get('memory_mb', 0):.1f}MB")
+        if 'uptime' in self.system_metrics:
+            uptime = system_metrics.get('uptime', 0)
+            uptime_text = f"{int(uptime//3600):02d}:{int((uptime%3600)//60):02d}:{int(uptime%60):02d}"
+            self.system_metrics['uptime'].config(text=uptime_text)
+        if 'features' in self.system_metrics:
+            self.system_metrics['features'].config(text=str(system_metrics.get('features_count', 0)))
         
-        uptime = system_metrics.get('uptime', 0)
-        uptime_text = f"{int(uptime//3600):02d}:{int((uptime%3600)//60):02d}:{int(uptime%60):02d}"
-        self.system_metrics['uptime'].config(text=uptime_text)
-        
-        # Métricas ML (se disponíveis)
+        # Métricas ML (se disponíveis) - proteger referências do layout compacto
         if hasattr(self.trading_system, 'metrics') and self.trading_system.metrics:
             metrics_obj = self.trading_system.metrics
             if hasattr(metrics_obj, 'metrics'):
                 ml_predictions = metrics_obj.metrics.get('predictions_made', 0)
                 signals_generated = metrics_obj.metrics.get('signals_generated', 0)
-                self.system_metrics['ml_predictions'].config(text=str(ml_predictions))
-                self.system_metrics['signals_generated'].config(text=str(signals_generated))
+                if 'ml_predictions' in self.system_metrics:
+                    self.system_metrics['ml_predictions'].config(text=str(ml_predictions))
+                if 'signals_generated' in self.system_metrics:
+                    self.system_metrics['signals_generated'].config(text=str(signals_generated))
                 
     def _update_positions_display(self):
         """Atualiza display de posições"""
+        # Verificar se positions_tree existe (removido do layout compacto)
+        if not hasattr(self, 'positions_tree'):
+            return
+            
         # Limpar árvore
         for item in self.positions_tree.get_children():
             self.positions_tree.delete(item)
@@ -773,6 +1023,54 @@ class TradingMonitorGUI:
                 f"{pnl:+.2f}",
                 str(size)
             ))
+
+    def _update_system_status(self):
+        """Atualiza status do sistema em tempo real"""
+        try:
+            if not hasattr(self, 'status_labels'):
+                return
+                
+            # Atualizar status do sistema
+            if hasattr(self.trading_system, 'is_running'):
+                if self.trading_system.is_running:
+                    status_text = "Operacional"
+                    status_color = self.colors['profit']
+                else:
+                    status_text = "Parado"
+                    status_color = self.colors['loss']
+                    
+                if 'system' in self.status_labels:
+                    self.status_labels['system'].config(text=status_text, fg=status_color)
+            
+            # Atualizar status da conexão
+            connection_status = "Online"
+            connection_color = self.colors['profit']
+            
+            # Verificar se há conexão ativa
+            if hasattr(self.trading_system, 'connection_manager'):
+                if hasattr(self.trading_system.connection_manager, 'connected'):
+                    if not self.trading_system.connection_manager.connected:
+                        connection_status = "Offline"
+                        connection_color = self.colors['loss']
+                elif hasattr(self.trading_system.connection_manager, 'is_connected'):
+                    if not self.trading_system.connection_manager.is_connected():
+                        connection_status = "Offline"
+                        connection_color = self.colors['loss']
+            
+            if 'connection' in self.status_labels:
+                self.status_labels['connection'].config(text=connection_status, fg=connection_color)
+            
+            # Atualizar ticker
+            if hasattr(self.trading_system, 'ticker') and 'ticker' in self.status_labels:
+                self.status_labels['ticker'].config(text=self.trading_system.ticker)
+            
+            # Atualizar última atualização
+            if 'last_update' in self.status_labels:
+                current_time = datetime.now().strftime('%H:%M:%S')
+                self.status_labels['last_update'].config(text=current_time)
+                
+        except Exception as e:
+            print(f"Erro atualizando status do sistema: {e}")
             
     def _update_status(self, message: str, color: Optional[str] = None):
         """Atualiza status do sistema"""
@@ -789,6 +1087,189 @@ class TradingMonitorGUI:
         else:
             self.root.destroy()
             
+    def _create_system_status_section_improved(self, parent):
+        """Cria seção de status do sistema melhorada"""
+        # Container principal
+        container = ttk.Frame(parent)
+        container.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        
+        # Labels para status do sistema
+        self.status_labels = {}
+        
+        # Grid para organização compacta
+        grid = ttk.Frame(container)
+        grid.pack(fill=tk.X)
+        
+        # Status labels com cores dinâmicas e atualizações automáticas
+        status_items = [
+            ('system', 'Sistema:', 'Ativo'),
+            ('connection', 'Conexão:', 'Online'),
+            ('ticker', 'Ticker:', getattr(self.trading_system, 'ticker', 'WDOQ25')),
+            ('last_update', 'Atualiz:', datetime.now().strftime('%H:%M:%S'))
+        ]
+        
+        for i, (key, label, default_value) in enumerate(status_items):
+            row = i // 2
+            col = (i % 2) * 2
+            
+            tk.Label(grid, text=label, font=self.fonts['small'],
+                    fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(
+                        row=row, column=col, sticky='w', padx=(0, 5))
+            
+            self.status_labels[key] = tk.Label(grid, text=default_value, font=self.fonts['data'],
+                                             fg=self.colors['profit'], bg=self.colors['bg_dark'])
+            self.status_labels[key].grid(row=row, column=col+1, sticky='w', padx=(0, 20))
+        
+        # Configurar expansão
+        grid.grid_columnconfigure(1, weight=1)
+        grid.grid_columnconfigure(3, weight=1)
+
+    def _create_market_data_section_improved(self, parent):
+        """Cria seção de dados de mercado melhorada"""
+        # Container com duas colunas
+        container = ttk.Frame(parent)
+        container.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        
+        # OHLC compacto
+        ohlc_frame = ttk.LabelFrame(container, text="💰 OHLC", padding=4)
+        ohlc_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4))
+        
+        # Labels para OHLC
+        self.candle_labels = {}
+        ohlc_grid = ttk.Frame(ohlc_frame)
+        ohlc_grid.pack(fill=tk.X)
+        
+        ohlc_items = [('open', 'Open'), ('high', 'High'), ('low', 'Low'), ('close', 'Close')]
+        for i, (key, label) in enumerate(ohlc_items):
+            row = i // 2
+            col = (i % 2) * 2
+            
+            tk.Label(ohlc_grid, text=f"{label}:", font=self.fonts['small'],
+                    fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(
+                        row=row, column=col, sticky='w', padx=(0, 3))
+            
+            self.candle_labels[key] = tk.Label(ohlc_grid, text="-", font=self.fonts['data'],
+                                             fg=self.colors['text'], bg=self.colors['bg_dark'])
+            self.candle_labels[key].grid(row=row, column=col+1, sticky='w', padx=(0, 10))
+        
+        # Volume e timestamp
+        vol_frame = ttk.LabelFrame(container, text="📊 Info", padding=4)
+        vol_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(4, 0))
+        
+        vol_grid = ttk.Frame(vol_frame)
+        vol_grid.pack(fill=tk.X)
+        
+        tk.Label(vol_grid, text="Volume:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=0, column=0, sticky='w')
+        self.candle_labels['volume'] = tk.Label(vol_grid, text="-", font=self.fonts['data'],
+                                               fg=self.colors['text'], bg=self.colors['bg_dark'])
+        self.candle_labels['volume'].grid(row=0, column=1, sticky='w', padx=(5, 0))
+        
+        tk.Label(vol_grid, text="Hora:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=1, column=0, sticky='w')
+        self.candle_labels['timestamp'] = tk.Label(vol_grid, text="-", font=self.fonts['small'],
+                                                  fg=self.colors['text_dark'], bg=self.colors['bg_dark'])
+        self.candle_labels['timestamp'].grid(row=1, column=1, sticky='w', padx=(5, 0))
+        
+        tk.Label(vol_grid, text="Variação:", font=self.fonts['small'],
+                fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=2, column=0, sticky='w')
+        self.candle_labels['variation'] = tk.Label(vol_grid, text="-.--", font=self.fonts['data'],
+                                                  fg=self.colors['neutral'], bg=self.colors['bg_dark'])
+        self.candle_labels['variation'].grid(row=2, column=1, sticky='w', padx=(5, 0))
+
+    def _create_metrics_section_improved(self, parent):
+        """Cria seção de métricas melhorada"""
+        # Container principal
+        container = ttk.Frame(parent)
+        container.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        
+        # Dividir em duas colunas: Trading e Sistema
+        # Trading metrics
+        trading_frame = ttk.LabelFrame(container, text="📈 Trading", padding=4)
+        trading_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4))
+        
+        self.trading_metrics = {}
+        trading_grid = ttk.Frame(trading_frame)
+        trading_grid.pack(fill=tk.X)
+        
+        trading_items = [('pnl', 'P&L:', 'R$ 0.00'), ('trades', 'Trades:', '0'), ('win_rate', 'Win Rate:', '0%')]
+        for i, (key, label, default) in enumerate(trading_items):
+            tk.Label(trading_grid, text=label, font=self.fonts['small'],
+                    fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=i, column=0, sticky='w', padx=(0, 5))
+            
+            self.trading_metrics[key] = tk.Label(trading_grid, text=default, font=self.fonts['data'],
+                                               fg=self.colors['text'], bg=self.colors['bg_dark'])
+            self.trading_metrics[key].grid(row=i, column=1, sticky='w')
+        
+        # System metrics
+        system_frame = ttk.LabelFrame(container, text="🖥️ Sistema", padding=4)
+        system_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(4, 0))
+        
+        self.system_metrics = {}
+        system_grid = ttk.Frame(system_frame)
+        system_grid.pack(fill=tk.X)
+        
+        system_items = [('cpu', 'CPU:', '0%'), ('memory', 'RAM:', '0 MB'), ('uptime', 'Uptime:', '0s')]
+        for i, (key, label, default) in enumerate(system_items):
+            tk.Label(system_grid, text=label, font=self.fonts['small'],
+                    fg=self.colors['text_dark'], bg=self.colors['bg_dark']).grid(row=i, column=0, sticky='w', padx=(0, 5))
+            
+            self.system_metrics[key] = tk.Label(system_grid, text=default, font=self.fonts['data'],
+                                              fg=self.colors['text'], bg=self.colors['bg_dark'])
+            self.system_metrics[key].grid(row=i, column=1, sticky='w')
+
+    def _create_alerts_section_improved(self, parent):
+        """Cria seção de alertas melhorada e compacta"""
+        # Container compacto com padding reduzido
+        container = ttk.Frame(parent)
+        container.pack(fill=tk.X, padx=6, pady=2)
+        
+        # Listbox compacta com altura ainda menor
+        self.alerts_listbox = tk.Listbox(container, font=self.fonts['small'], height=2,
+                                        bg=self.colors['bg_light'], fg=self.colors['text'],
+                                        selectbackground=self.colors['accent'])
+        
+        scrollbar = ttk.Scrollbar(container, orient='vertical', command=self.alerts_listbox.yview)
+        self.alerts_listbox.configure(yscrollcommand=scrollbar.set)
+        
+        self.alerts_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Alertas iniciais atualizados
+        self.alerts_listbox.insert(0, f"Sistema iniciado - {datetime.now().strftime('%H:%M:%S')}")
+        self.alerts_listbox.insert(1, "Aguardando dados do mercado...")
+
+    def _create_footer_improved(self, parent):
+        """Cria footer melhorado e compacto"""
+        # Container principal com padding reduzido
+        footer = ttk.Frame(parent)
+        footer.pack(fill=tk.X, side=tk.BOTTOM, pady=(3, 0))
+        
+        # Separador
+        ttk.Separator(footer, orient='horizontal').pack(fill=tk.X, pady=(0, 3))
+        
+        # Status e controles em linha
+        controls = ttk.Frame(footer)
+        controls.pack(fill=tk.X)
+        
+        # Status ativo/inativo
+        self.footer_status = tk.Label(controls, text="Monitor Ativo", font=self.fonts['small'],
+                                     fg=self.colors['profit'], bg=self.colors['bg_dark'])
+        self.footer_status.pack(side=tk.LEFT)
+        
+        # Botões de controle
+        self.start_button = ttk.Button(controls, text="▶ Iniciar", command=self.start_monitoring)
+        self.start_button.pack(side=tk.LEFT, padx=(20, 5))
+        
+        self.stop_button = ttk.Button(controls, text="⏸ Parar", command=self.stop_monitoring, state='disabled')
+        self.stop_button.pack(side=tk.LEFT, padx=(0, 20))
+        
+        # Timestamp da última atualização
+        self.last_update_label = tk.Label(controls, text="Última atualização: --:--:--", 
+                                         font=self.fonts['small'], fg=self.colors['text_dark'],
+                                         bg=self.colors['bg_dark'])
+        self.last_update_label.pack(side=tk.RIGHT)
+
     def run(self):
         """
         Inicia a interface gráfica na thread principal
