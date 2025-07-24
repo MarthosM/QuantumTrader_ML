@@ -61,8 +61,13 @@ class MLFeatures:
         
         # Filtrar apenas features requeridas se especificadas
         if self.required_features:
-            available_features = [f for f in self.required_features if f in features.columns]
-            features = features[available_features]
+            # Garantir que features é um DataFrame
+            if hasattr(features, 'columns'):
+                available_features = [f for f in self.required_features if f in features.columns]
+                features = features[available_features]
+            else:
+                self.logger.error(f"Features não é um DataFrame válido: {type(features)}")
+                return pd.DataFrame()
         
         self.logger.info(f"Features ML calculadas: {len(features.columns)} colunas")
         

@@ -200,6 +200,7 @@ def test_integration():
 - Feature calculation: < 5 seconds
 - ML prediction: < 1 second
 - Order execution: < 100ms
+- Historical data loading: 1 day (optimized for faster startup)
 
 ### Trading Metrics
 - Win Rate: > 55%
@@ -209,6 +210,14 @@ def test_integration():
 - Daily trades: 3-10 (market dependent)
 
 ## 🚨 Common Issues and Solutions
+
+### Contract Ticker Issues (WDO)
+- **Regra**: SEMPRE usa contrato do PRÓXIMO mês
+- **Não importa o dia**: Do 1º ao último dia do mês, usa próximo mês
+- **Exemplos**: 
+  - TODO julho (01/07 a 31/07) → WDOQ25 (agosto)
+  - TODO agosto (01/08 a 31/08) → WDOU25 (setembro)
+  - TODO dezembro (01/12 a 31/12) → WDOF26 (janeiro/26)
 
 ### Features Not Found
 - Check if feature is calculated in `ml_features.py` or `technical_indicators.py`

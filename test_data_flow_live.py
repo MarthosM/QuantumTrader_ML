@@ -86,7 +86,7 @@ class DataFlowTester:
             
             # 5. Inicializar Feature Engine
             self.logger.info("\n5. Inicializando Feature Engine...")
-            self.feature_engine = FeatureEngine(self.data_structure)
+            self.feature_engine = FeatureEngine()
             
             # 6. Inicializar Prediction Engine
             self.logger.info("\n6. Inicializando Prediction Engine...")

@@ -584,7 +584,7 @@ class TradingSystem:
                         self.logger.info("Dados históricos solicitados com sucesso!")
                         self.logger.info("Aguardando recebimento via callback...")
                         
-                        success = self.connection.wait_for_historical_data(timeout_seconds=60)
+                        success = self.connection.wait_for_historical_data(timeout_seconds=120)
                         
                         if success:
                             self.logger.info(f"Dados históricos recebidos com sucesso!")
@@ -719,7 +719,7 @@ class TradingSystem:
             
             # 1. Carregar dados históricos
             self.logger.info("Carregando dados históricos...")
-            days_back = self.config.get('historical_days', 10)
+            days_back = self.config.get('historical_days', 1)
             
             if not self._load_historical_data_safe(self.ticker, days_back):
                 self.logger.error("Falha ao carregar dados históricos")
@@ -1055,7 +1055,7 @@ class TradingSystem:
         # Carregar dados históricos do novo contrato
         if self.data_loader:
             self.logger.info(f"Carregando dados históricos para {self.ticker}")
-            self._load_historical_data_safe(self.ticker, self.config.get('historical_days', 10))
+            self._load_historical_data_safe(self.ticker, self.config.get('historical_days', 1))
                 
     def _request_feature_calculation(self):
         """Solicita cálculo de features"""
@@ -1143,7 +1143,7 @@ class TradingSystem:
                 self.last_prediction = prediction
                 
                 # Registrar métricas se disponível
-                if self.metrics:
+                if self.metrics and hasattr(self.metrics, 'record_prediction'):
                     self.metrics.record_prediction(prediction)
                 
                 # Registrar no monitor de performance (ETAPA 4)

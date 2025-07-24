@@ -163,6 +163,18 @@ class TradingDataStructure:
                 'end': self.candles.index[-1]
             }
     
+    def get_candles(self) -> pd.DataFrame:
+        """Retorna DataFrame de candles"""
+        return self.candles.copy() if not self.candles.empty else pd.DataFrame()
+    
+    def get_indicators(self) -> pd.DataFrame:
+        """Retorna DataFrame de indicadores"""
+        return self.indicators.copy() if not self.indicators.empty else pd.DataFrame()
+    
+    def get_features(self) -> pd.DataFrame:
+        """Retorna DataFrame de features"""
+        return self.features.copy() if not self.features.empty else pd.DataFrame()
+    
     def get_latest_candle(self) -> Optional[pd.Series]:
         """Retorna o candle mais recente"""
         if not self.candles.empty:

@@ -42,7 +42,7 @@ def load_config():
         'trading_password': os.getenv('PROFIT_TRADING_PASSWORD'),
         'models_dir': os.getenv('MODELS_DIR', r'C:\Users\marth\OneDrive\Programacao\Python\Projetos\ML_Tradingv2.0\src\models\models_regime3'),
         'ticker': os.getenv('TICKER'),
-        'historical_days': int(os.getenv('HISTORICAL_DAYS', '10')),
+        'historical_days': int(os.getenv('HISTORICAL_DAYS', '1')),
         'ml_interval': int(os.getenv('ML_INTERVAL', '60')),
         'initial_balance': float(os.getenv('INITIAL_BALANCE', '100000')),
         'strategy': {

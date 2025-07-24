@@ -12,7 +12,7 @@ from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
 
 # Diretório dos modelos
-models_dir = os.path.join(os.path.dirname(__file__), 'models')
+models_dir = os.path.join(os.path.dirname(__file__), 'src', 'training', 'models')
 os.makedirs(models_dir, exist_ok=True)
 
 # Features de exemplo baseadas no sistema

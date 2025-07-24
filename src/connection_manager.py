@@ -576,27 +576,21 @@ class ConnectionManager:
         current_year = str(reference_date.year)[-2:]  # Últimos 2 dígitos
         current_day = reference_date.day
         
-        # REGRA DE VIRADA: WDO vira no 15º dia útil do mês anterior
-        # Se estamos após o dia 15 do mês, usar próximo mês
-        if current_day >= 15:
-            # Calcular próximo mês
-            if current_month == 12:
-                next_month = 1
-                next_year = str(reference_date.year + 1)[-2:]
-            else:
-                next_month = current_month + 1
-                next_year = current_year
-            
-            contract_month_code = month_codes[next_month]
-            contract_year = next_year
-            
-            self.logger.info(f"📅 Após dia 15 do mês - usando contrato do próximo mês")
+        # REGRA WDO: SEMPRE usar contrato do PRÓXIMO mês
+        # Exemplo: TODO mês de julho (01/07 a 31/07) usa WDOQ25 (agosto)
+        
+        # Calcular próximo mês
+        if current_month == 12:
+            next_month = 1
+            next_year = str(reference_date.year + 1)[-2:]
         else:
-            # Usar mês atual
-            contract_month_code = month_codes[current_month]
-            contract_year = current_year
+            next_month = current_month + 1
+            next_year = current_year
             
-            self.logger.info(f"📅 Antes do dia 15 - usando contrato do mês atual")
+        contract_month_code = month_codes[next_month]
+        contract_year = next_year
+        
+        self.logger.info(f"📅 Mês {current_month} usa contrato do mês {next_month} (sempre próximo mês)")
         
         contract = f"WDO{contract_month_code}{contract_year}"
         self.logger.info(f"🎯 Contrato WDO detectado: {contract}")
@@ -632,23 +626,8 @@ class ConnectionManager:
             if "WDO" not in variations:
                 variations.append("WDO")
             
-            # 4. Contrato do mês anterior (caso virada recente)
-            try:
-                last_month_date = datetime.now() - timedelta(days=30)
-                last_month_contract = self._get_current_wdo_contract(last_month_date)
-                if last_month_contract not in variations:
-                    variations.append(last_month_contract)
-            except Exception as e:
-                self.logger.debug(f"Erro calculando contrato mês anterior: {e}")
-            
-            # 5. Contrato do próximo mês (backup)
-            try:
-                next_month_date = datetime.now() + timedelta(days=30)
-                next_month_contract = self._get_current_wdo_contract(next_month_date)
-                if next_month_contract not in variations:
-                    variations.append(next_month_contract)
-            except Exception as e:
-                self.logger.debug(f"Erro calculando contrato próximo mês: {e}")
+            # Com a nova lógica corrigida, o contrato atual deve sempre funcionar
+            # Removendo tentativas desnecessárias de outros meses
                 
         else:
             # Para outros tickers, apenas usar o original
@@ -880,9 +859,9 @@ class ConnectionManager:
                         
                         return True
                     
-                    # PROTEÇÃO 2: Se passou 15 segundos sem dados, desistir
-                    if no_data_count >= 30 and current_count == 0:  # 30 * 0.5s = 15s
-                        self.logger.warning(f"⚠️ 15 segundos sem dados - assumindo que não há dados disponíveis")
+                    # PROTEÇÃO 2: Se passou 90 segundos sem dados, desistir
+                    if no_data_count >= 180 and current_count == 0:  # 180 * 0.5s = 90s
+                        self.logger.warning(f"⚠️ 90 segundos sem dados - assumindo que não há dados disponíveis")
                         return False
                     
                     # PROTEÇÃO 3: Log periódico menos frequente

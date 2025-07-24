@@ -22,6 +22,10 @@ class DataIntegration:
         self.trades_buffer = deque(maxlen=10000)  # Últimos 10k trades
         self.buffer_lock = Lock()
         
+        # Buffer para candles (processamento em lote)
+        self.candles_buffer = []
+        self.candles_buffer_lock = Lock()
+        
         # DataFrames de candles
         self.candles_1min = pd.DataFrame()
         self.last_candle_time = None
@@ -51,11 +55,19 @@ class DataIntegration:
             if trade_data.get('event_type') == 'historical_data_complete':
                 self.logger.info("🎉 Recebido sinal de conclusão de dados históricos")
                 
+                # Processar qualquer candle restante no buffer
+                with self.candles_buffer_lock:
+                    if self.candles_buffer:
+                        self._flush_candles_buffer()
+                
                 # Fazer log do DataFrame criado
                 self.log_dataframe_summary()
                 
                 # Marcar que carregamento histórico foi concluído
                 self._historical_loading_complete = True
+                
+                # Verificar e corrigir gap temporal
+                self._check_and_fix_temporal_gap()
                 
                 return
             
@@ -328,8 +340,8 @@ class DataIntegration:
                 if self._historical_data_count % 10000 == 0:  # Log ocasional
                     self.logger.warning(f"Dados históricos muito antigos ({days_old} dias) - verificar se são válidos")
             
-            # Log informativo ocasional
-            if self._historical_data_count % 1000 == 0:
+            # Log informativo menos frequente para melhor performance
+            if self._historical_data_count % 10000 == 0:
                 self.logger.info(f"Processando dados históricos de {days_old} dias atrás ({self._historical_data_count} processados)")
                 
         else:
@@ -357,36 +369,76 @@ class DataIntegration:
         if not period_trades:
             return
         
-        # Criar candle
+        # Criar candle otimizado
         prices = [t['price'] for t in period_trades]
-        volumes = [t['volume'] for t in period_trades]
+        total_volume = sum(t['volume'] for t in period_trades)
         
-        candle = pd.DataFrame([{
-            'timestamp': start_time,
+        candle_data = {
             'open': prices[0],
             'high': max(prices),
             'low': min(prices),
             'close': prices[-1],
-            'volume': sum(volumes),
+            'volume': total_volume,
             'trades': len(period_trades)
-        }])
+        }
         
-        candle.set_index('timestamp', inplace=True)
+        # Adicionar buy/sell volume se disponível
+        buy_vol = sum(t.get('buy_volume', 0) for t in period_trades)
+        sell_vol = sum(t.get('sell_volume', 0) for t in period_trades)
+        if buy_vol > 0 or sell_vol > 0:
+            candle_data['buy_volume'] = buy_vol
+            candle_data['sell_volume'] = sell_vol
         
-        # Adicionar ao DataFrame principal
-        if self.candles_1min.empty:
-            self.candles_1min = candle
-        else:
-            self.candles_1min = pd.concat([self.candles_1min, candle])
+        candle = pd.DataFrame([candle_data], index=[start_time])
+        
+        # Usar buffer para processamento em lote durante carregamento histórico
+        with self.candles_buffer_lock:
+            self.candles_buffer.append(candle)
             
-        # Limitar tamanho (manter últimas 1440 candles = 24h)
-        if len(self.candles_1min) > 1440:
-            self.candles_1min = self.candles_1min.iloc[-1440:]
+            # Processar em lote a cada 50 candles para melhor performance
+            if len(self.candles_buffer) >= 50:
+                self._flush_candles_buffer()
+        
+        # Para dados em tempo real, processar imediatamente
+        if self._historical_loading_complete:
+            with self.candles_buffer_lock:
+                if self.candles_buffer:
+                    self._flush_candles_buffer()
         
         self.logger.debug(f"Candle formado: {start_time} - OHLC: {candle.iloc[0].to_dict()}")
         
-        # Log informativo sobre novo candle
-        self.logger.info(f"Novo candle formado: {start_time}")
+        # Log informativo sobre novo candle (apenas se não histórico para não criar spam)
+        if self._historical_loading_complete:
+            self.logger.info(f"Novo candle formado: {start_time}")
+    
+    def _flush_candles_buffer(self):
+        """Processa buffer de candles em lote (thread-safe)"""
+        if not self.candles_buffer:
+            return
+            
+        try:
+            # Concatenar todos os candles do buffer de uma vez
+            new_candles = pd.concat(self.candles_buffer, ignore_index=False, sort=False)
+            
+            # Adicionar ao DataFrame principal
+            if self.candles_1min.empty:
+                self.candles_1min = new_candles
+            else:
+                self.candles_1min = pd.concat([self.candles_1min, new_candles], ignore_index=False, sort=False)
+            
+            # Limitar tamanho se necessário
+            if len(self.candles_1min) > 1440:
+                self.candles_1min = self.candles_1min.iloc[-1440:]
+            
+            # Limpar buffer
+            buffer_size = len(self.candles_buffer)
+            self.candles_buffer.clear()
+            
+            if not self._historical_loading_complete:
+                self.logger.debug(f"Buffer processado: {buffer_size} candles adicionados")
+                
+        except Exception as e:
+            self.logger.error(f"Erro processando buffer de candles: {e}")
     
     def log_dataframe_summary(self):
         """
@@ -437,6 +489,53 @@ class DataIntegration:
             
         except Exception as e:
             self.logger.error(f"Erro no log do DataFrame: {e}")
+    
+    def _check_and_fix_temporal_gap(self):
+        """Verifica e corrige gap temporal entre dados históricos e tempo real"""
+        try:
+            if not hasattr(self, 'candles_1min') or self.candles_1min.empty:
+                self.logger.warning("Sem dados para verificar gap temporal")
+                return
+            
+            # Obter último timestamp dos dados históricos
+            last_historical_time = self.candles_1min.index.max()
+            current_time = datetime.now()
+            
+            # Calcular gap em segundos
+            gap_seconds = (current_time - last_historical_time).total_seconds()
+            
+            self.logger.info(f"📊 Gap temporal detectado: {gap_seconds:.0f}s ({gap_seconds/60:.1f} min)")
+            
+            # Se gap > 10 minutos, solicitar dados incrementais
+            if gap_seconds > 600:  # 10 minutos
+                self.logger.warning(f"⚠️ Gap temporal grande detectado: {gap_seconds/60:.1f} min")
+                self.logger.info("🔄 Solicitando dados incrementais para cobrir gap...")
+                
+                # Aqui você pode implementar a lógica para solicitar dados incrementais
+                # via ConnectionManager para cobrir o gap
+                self._request_gap_data(last_historical_time, current_time)
+            else:
+                self.logger.info("✅ Gap temporal aceitável - não necessário carregamento adicional")
+                
+        except Exception as e:
+            self.logger.error(f"Erro verificando gap temporal: {e}")
+    
+    def _request_gap_data(self, start_time: datetime, end_time: datetime):
+        """Solicita dados para cobrir gap temporal"""
+        try:
+            if self.connection_manager is None:
+                self.logger.warning("ConnectionManager não disponível para solicitar dados de gap")
+                return
+            
+            self.logger.info(f"📥 Solicitando dados de gap: {start_time} até {end_time}")
+            
+            # Implementar solicitação de dados incrementais
+            # Nota: Esta funcionalidade depende da implementação do ConnectionManager
+            # Por enquanto, apenas log informativo
+            self.logger.info("💡 Funcionalidade de gap ainda não implementada no ConnectionManager")
+            
+        except Exception as e:
+            self.logger.error(f"Erro solicitando dados de gap: {e}")
     
     def get_candles(self, interval: str = '1min') -> pd.DataFrame:
         """

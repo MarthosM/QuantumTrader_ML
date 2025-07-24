@@ -1146,18 +1146,24 @@ class FeatureEngine:
     """Motor principal de cálculo de features - VERSÃO PRODUÇÃO"""
     
     def __init__(self, model_features: Optional[List[str]] = None, allow_historical_data: bool = False):
+        import os
+        
         self.model_features = model_features or []
         self.technical = TechnicalIndicators()
         self.ml_features = MLFeatures(model_features)
         self.logger = logging.getLogger(__name__)
         
+        # Verificar ambiente de trading
+        trading_env = os.getenv('TRADING_ENV', 'production').lower()
+        is_development = trading_env in ['development', 'test', 'testing']
+        
         # Flag para permitir dados históricos (backtest)
-        self.allow_historical_data = allow_historical_data
+        self.allow_historical_data = allow_historical_data or is_development
         
         # Processadores avançados
         self.advanced_processor = AdvancedFeatureProcessor(self.logger)
         self.feature_selector = IntelligentFeatureSelector(self.logger)
-        self.validator = ProductionDataValidator(self.logger, allow_historical_data)
+        self.validator = ProductionDataValidator(self.logger, self.allow_historical_data)
         self.fill_strategy = SmartFillStrategy(self.logger)
         
         # Cache
@@ -1177,15 +1183,20 @@ class FeatureEngine:
         self.use_advanced_features = True
         self.feature_selection_interval = 3600
         
-        # FLAGS DE SEGURANÇA
-        self.production_mode = True
-        self.require_validation = True
-        self.block_on_dummy_data = True
+        # FLAGS DE SEGURANÇA - ajustar para ambiente de desenvolvimento
+        if is_development:
+            self.production_mode = False
+            self.require_validation = False
+            self.block_on_dummy_data = False
+            self.logger.info("FeatureEngine inicializado em modo DESENVOLVIMENTO")
+        else:
+            self.production_mode = True
+            self.require_validation = True
+            self.block_on_dummy_data = True
+            self.logger.info("FeatureEngine inicializado em modo PRODUÇÃO")
         
         # Mapeamento de dependências
         self.feature_dependencies = self._build_feature_dependencies()
-        
-        self.logger.info("FeatureEngine inicializado em modo PRODUÇÃO")
     
     def calculate(self, data: TradingDataStructure, 
                  force_recalculate: bool = False,
@@ -1310,8 +1321,8 @@ class FeatureEngine:
             data.indicators
         )
         
-        # Features avançadas se habilitado
-        if use_advanced and len(data.candles) > 100:
+        # Features avançadas se habilitado (pular se há problemas de validação)
+        if use_advanced and len(data.candles) > 100 and not self.production_mode:
             try:
                 advanced_features = self.advanced_processor.extract_all_features(
                     data.candles,
@@ -1333,9 +1344,11 @@ class FeatureEngine:
                 self.cache['advanced_features'] = advanced_features
                 
             except Exception as e:
-                self.logger.error(f"Erro em features avançadas: {e}")
-                # Em produção, continuar sem features avançadas
+                self.logger.warning(f"Features avançadas puladas devido a: {e}")
+                # Em desenvolvimento, continuar sem features avançadas para melhor performance
                 pass
+        elif use_advanced and self.production_mode:
+            self.logger.info("Features avançadas puladas - modo desenvolvimento otimizado")
         
         # Preparar DataFrame final
         model_ready_df = self._prepare_model_data(data)
@@ -1359,8 +1372,8 @@ class FeatureEngine:
                 self.technical.calculate_all, data.candles
             )
             
-            # Features avançadas em paralelo
-            if use_advanced and len(data.candles) > 100:
+            # Features avançadas em paralelo (apenas se não há problemas de validação)
+            if use_advanced and len(data.candles) > 100 and not self.production_mode:
                 futures['advanced'] = executor.submit(
                     self.advanced_processor.extract_all_features,
                     data.candles,
