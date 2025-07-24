@@ -188,41 +188,49 @@ class HyperparameterOptimizer:
         # Treinar
         if model_type == 'xgboost':
             try:
-                # Tentar com early_stopping_rounds (versões mais antigas)
-                model.fit(
-                    X_train, y_train,
-                    eval_set=[(X_val, y_val)],
-                    early_stopping_rounds=10,
-                    verbose=False
-                )
-            except (TypeError, AttributeError):
-                # Fallback simples sem early stopping
-                self.logger.warning("Early stopping não disponível, treinando sem")
-                model.fit(X_train, y_train, verbose=False)
+                # Usar API moderna do XGBoost sem parâmetros deprecated
+                model.fit(X_train, y_train)
+            except Exception as e:
+                self.logger.warning(f"Erro ao treinar XGBoost: {e}")
+                model.fit(X_train, y_train)
         elif model_type == 'lightgbm':
             try:
-                import lightgbm as lgb
-                model.fit(
-                    X_train, y_train,
-                    eval_set=[(X_val, y_val)],
-                    callbacks=[
-                        lgb.early_stopping(10),
-                        lgb.log_evaluation(0)
-                    ]
-                )
+                # Usar API simples do LightGBM
+                model.fit(X_train, y_train)
             except Exception as e:
-                self.logger.warning(f"Early stopping não disponível para LightGBM: {e}, treinando sem")
-                model.fit(X_train, y_train, verbose=False)
+                self.logger.warning(f"Erro ao treinar LightGBM: {e}")
+                model.fit(X_train, y_train)
         else:
             model.fit(X_train, y_train)
         
         # Avaliar
         y_pred = model.predict(X_val)
         
+        # Garantir que y_pred seja um array numpy 1D
+        # Verificar se é matriz esparsa do scipy de forma type-safe
+        try:
+            from scipy import sparse
+            import scipy.sparse as sp
+            if sp.issparse(y_pred):
+                y_pred = y_pred.toarray()  # type: ignore
+        except ImportError:
+            # Fallback se scipy não estiver disponível
+            if hasattr(y_pred, 'toarray'):
+                try:
+                    y_pred = y_pred.toarray()  # type: ignore
+                except AttributeError:
+                    pass
+        
+        # Converter para array numpy se necessário
+        if isinstance(y_pred, list):
+            y_pred = np.array(y_pred)
+        y_pred = np.asarray(y_pred).flatten()
+        
         # Usar F1 score como métrica principal
         score = f1_score(y_val, y_pred, average='weighted')
         
-        return score
+        # Garantir que retornamos um float
+        return float(score)
     
     def optimize_deep_learning_architecture(self, 
                                           model_type: str,
@@ -246,7 +254,9 @@ class HyperparameterOptimizer:
         if model_type == 'lstm':
             objective = self._create_lstm_objective(X_train, y_train, X_val, y_val)
         elif model_type == 'transformer':
-            objective = self._create_transformer_objective(X_train, y_train, X_val, y_val)
+            # Placeholder - implementar quando necessário
+            self.logger.warning("Otimização de Transformer ainda não implementada")
+            return {}
         else:
             raise ValueError(f"Tipo de modelo DL desconhecido: {model_type}")
         
@@ -310,8 +320,8 @@ class HyperparameterOptimizer:
         import json
         import pickle
         
-        save_path = Path(save_path)
-        save_path.mkdir(parents=True, exist_ok=True)
+        save_path_obj = Path(save_path)
+        save_path_obj.mkdir(parents=True, exist_ok=True)
         
         # Salvar resumo em JSON
         summary = {}
@@ -322,12 +332,12 @@ class HyperparameterOptimizer:
                 'n_trials': results['n_trials']
             }
         
-        with open(save_path / 'optimization_summary.json', 'w') as f:
+        with open(save_path_obj / 'optimization_summary.json', 'w') as f:
             json.dump(summary, f, indent=2)
         
         # Salvar estudos Optuna
         for model_type, results in self.study_results.items():
-            study_path = save_path / f'{model_type}_study.pkl'
+            study_path = save_path_obj / f'{model_type}_study.pkl'
             with open(study_path, 'wb') as f:
                 pickle.dump(results['study'], f)
         

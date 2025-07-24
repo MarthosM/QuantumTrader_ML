@@ -6,7 +6,7 @@ Resolve valores ausentes de forma inteligente sem introduzir viés
 import pandas as pd
 import numpy as np
 import logging
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -139,7 +139,7 @@ class RobustNaNHandler:
         }
     
     def handle_nans(self, df: pd.DataFrame, 
-                   raw_data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, int]]:
+                   raw_data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """
         Trata NaNs de forma inteligente baseado na estratégia por feature
         
@@ -177,10 +177,10 @@ class RobustNaNHandler:
                     df[col] = df[col].interpolate(method='linear', limit_direction='both')
                     
                 elif strategy == NaNHandlingStrategy.FORWARD_FILL:
-                    df[col] = df[col].fillna(method='ffill')
+                    df[col] = df[col].ffill()
                     
                 elif strategy == NaNHandlingStrategy.BACKWARD_FILL:
-                    df[col] = df[col].fillna(method='bfill')
+                    df[col] = df[col].bfill()
                     
                 # Ainda restam NaNs? Remove as linhas
                 if df[col].isna().any():
@@ -257,7 +257,7 @@ class RobustNaNHandler:
         else:
             period = int(feature_name.split('_')[1])
         
-        delta = data['close'].diff()
+        delta = data['close'].astype(float).diff()
         gain = delta.where(delta > 0, 0)
         loss = -delta.where(delta < 0, 0)
         
@@ -299,8 +299,8 @@ class RobustNaNHandler:
         period = 14 if feature_name == 'atr' else int(feature_name.split('_')[1])
         
         high_low = data['high'] - data['low']
-        high_close = np.abs(data['high'] - data['close'].shift())
-        low_close = np.abs(data['low'] - data['close'].shift())
+        high_close = pd.Series(np.abs(data['high'] - data['close'].shift()), index=data.index)
+        low_close = pd.Series(np.abs(data['low'] - data['close'].shift()), index=data.index)
         
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         atr = tr.rolling(window=period, min_periods=period//2).mean()
@@ -310,8 +310,8 @@ class RobustNaNHandler:
     def _calculate_adx_proper(self, data: pd.DataFrame) -> pd.Series:
         """Cálculo simplificado mas robusto do ADX"""
         # Implementação simplificada baseada em movimento direcional
-        high_diff = data['high'].diff()
-        low_diff = data['low'].diff()
+        high_diff = data['high'].astype(float).diff()
+        low_diff = data['low'].astype(float).diff()
         
         plus_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
         minus_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
@@ -324,9 +324,18 @@ class RobustNaNHandler:
         plus_di = 100 * (plus_dm_series.rolling(window=14).mean() / tr)
         minus_di = 100 * (minus_dm_series.rolling(window=14).mean() / tr)
         
-        adx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+        # Calcular DX mantendo como Series - evitar operações numpy diretas
+        dx_numerator = (plus_di - minus_di).abs()
+        dx_denominator = plus_di + minus_di
         
-        return adx.rolling(window=14).mean()
+        # Evitar divisão por zero
+        dx_denominator = dx_denominator.replace(0, np.nan)
+        dx = 100 * (dx_numerator / dx_denominator)
+        
+        # ADX como média móvel do DX
+        adx = dx.rolling(window=14, min_periods=7).mean()
+        
+        return adx
     
     def _calculate_volume_proper(self, data: pd.DataFrame, feature_name: str) -> pd.Series:
         """Cálculo robusto de features de volume"""
@@ -347,15 +356,15 @@ class RobustNaNHandler:
         """Cálculo robusto de volatilidade"""
         if 'parkinson' in feature_name:
             period = int(feature_name.split('_')[2])
-            ln_hl = np.log(data['high'] / data['low'])
-            return np.sqrt((ln_hl ** 2).rolling(window=period).mean())
+            ln_hl = (data['high'] / data['low']).apply(np.log)  # Manter como Series
+            return ((ln_hl ** 2).rolling(window=period).mean()).apply(np.sqrt)
         elif 'gk' in feature_name:  # Garman-Klass
             period = int(feature_name.split('_')[2])
-            ln_ho = np.log(data['high'] / data['open'])
-            ln_lo = np.log(data['low'] / data['open'])
-            ln_co = np.log(data['close'] / data['open'])
+            ln_ho = (data['high'] / data['open']).apply(np.log)  # Manter como Series
+            ln_lo = (data['low'] / data['open']).apply(np.log)   # Manter como Series
+            ln_co = (data['close'] / data['open']).apply(np.log) # Manter como Series
             gk = ln_ho * (ln_ho - ln_co) + ln_lo * (ln_lo - ln_co)
-            return np.sqrt(gk.rolling(window=period).mean())
+            return (gk.rolling(window=period).mean()).apply(np.sqrt)
         else:
             # Volatilidade padrão
             period = int(feature_name.split('_')[1])
@@ -367,7 +376,7 @@ class RobustNaNHandler:
         typical_price = (data['high'] + data['low'] + data['close']) / 3
         return (typical_price * data['volume']).cumsum() / data['volume'].cumsum()
     
-    def validate_nan_handling(self, df: pd.DataFrame) -> Dict[str, any]:
+    def validate_nan_handling(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
         Valida a qualidade do tratamento de NaN
         

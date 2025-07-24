@@ -33,6 +33,12 @@ class TrainingDataLoader:
                 class MockValidator:
                     def validate_data(self, data):
                         return {'is_valid': True, 'warnings': []}
+                    
+                    def validate_trading_data(self, data, context=None):
+                        """Mock implementation for validate_trading_data"""
+                        self.logger = logging.getLogger(__name__)
+                        self.logger.info(f"Mock validator - validating {len(data)} records for context: {context}")
+                        return {'is_valid': True, 'warnings': []}
                 
                 self.validator = MockValidator()
         
@@ -393,6 +399,45 @@ class TrainingDataLoader:
         
         self.logger.info(f"Criados {len(splits)} splits purged CV")
         return {'purged_cv': splits}
+    
+    def _time_series_split(self, data: pd.DataFrame,
+                          n_splits: int = 5,
+                          test_size_ratio: float = 0.2) -> Dict[str, List]:
+        """Split sequencial para séries temporais mantendo ordem cronológica"""
+        splits = []
+        data = data.sort_index()
+        data_length = len(data)
+        
+        # Calcular tamanho das janelas
+        total_test_size = int(data_length * test_size_ratio)
+        test_size_per_split = total_test_size // n_splits
+        
+        # Tamanho inicial de treino
+        initial_train_size = data_length - total_test_size
+        
+        for i in range(n_splits):
+            # Janela de treino - cresce progressivamente
+            train_end = initial_train_size + (i * test_size_per_split)
+            train_data = data.iloc[:train_end]
+            
+            # Janela de teste - sequencial após treino
+            test_start = train_end
+            test_end = min(test_start + test_size_per_split, data_length)
+            test_data = data.iloc[test_start:test_end]
+            
+            if len(test_data) == 0:
+                break
+                
+            splits.append({
+                'train': train_data,
+                'test': test_data,
+                'split': i,
+                'train_period': (train_data.index[0], train_data.index[-1]),
+                'test_period': (test_data.index[0], test_data.index[-1])
+            })
+        
+        self.logger.info(f"Criados {len(splits)} splits time series")
+        return {'time_series': splits}
     
     def _find_symbol_files(self, symbol: str, start_date: datetime, end_date: datetime) -> List[Path]:
         """Encontra arquivos de dados para um símbolo com busca flexível"""

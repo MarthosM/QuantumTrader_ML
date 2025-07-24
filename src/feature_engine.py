@@ -21,18 +21,24 @@ from ml_features import MLFeatures
 class ProductionDataValidator:
     """Validador rigoroso para dados de produção em trading real"""
     
-    def __init__(self, logger):
+    def __init__(self, logger, allow_historical_data=False):
         self.logger = logger
         self.min_price_change = 0.00001  # Mudança mínima aceitável de preço
         self.max_price_change = 0.20    # 20% máximo em 1 minuto
         self.min_volume = 1              # Volume mínimo por candle
+        self.allow_historical_data = allow_historical_data  # Flag para permitir dados históricos
         
     def validate_real_data(self, data: pd.DataFrame, source: str) -> bool:
         """
         Valida se dados são reais e não sintéticos
         
-        CRÍTICO: Bloqueia operação se detectar dados dummy
+        CRÍTICO: Bloqueia operação se detectar dados dummy (apenas para trading em tempo real)
         """
+        # Para backtest/dados históricos, pular validações rigorosas
+        if self.allow_historical_data:
+            self.logger.debug(f"Validação relaxada para dados históricos de {source}")
+            return True
+        
         try:
             # 1. Verificar se DataFrame não está vazio
             if data.empty:
@@ -130,8 +136,8 @@ class ProductionDataValidator:
             self.logger.warning("Índice não é DatetimeIndex")
             return False
         
-        # Verificar se dados são muito antigos
-        if len(data) > 0:
+        # Verificar se dados são muito antigos (apenas para trading em tempo real)
+        if len(data) > 0 and not self.allow_historical_data:
             latest_time = data.index.max()
             current_time = pd.Timestamp.now()
             
@@ -141,8 +147,8 @@ class ProductionDataValidator:
                 self.logger.warning(f"Dados muito antigos: {time_diff}")
                 return False
         
-        # Verificar se há gaps suspeitos
-        if len(data) > 1:
+        # Verificar se há gaps suspeitos (apenas para trading em tempo real)
+        if len(data) > 1 and not self.allow_historical_data:
             time_diffs = pd.Series(data.index[1:]) - pd.Series(data.index[:-1])
             
             # Em trading real, espera-se alguns gaps (finais de semana, feriados)
@@ -1139,16 +1145,19 @@ class IntelligentFeatureSelector:
 class FeatureEngine:
     """Motor principal de cálculo de features - VERSÃO PRODUÇÃO"""
     
-    def __init__(self, model_features: Optional[List[str]] = None):
+    def __init__(self, model_features: Optional[List[str]] = None, allow_historical_data: bool = False):
         self.model_features = model_features or []
         self.technical = TechnicalIndicators()
         self.ml_features = MLFeatures(model_features)
         self.logger = logging.getLogger(__name__)
         
+        # Flag para permitir dados históricos (backtest)
+        self.allow_historical_data = allow_historical_data
+        
         # Processadores avançados
         self.advanced_processor = AdvancedFeatureProcessor(self.logger)
         self.feature_selector = IntelligentFeatureSelector(self.logger)
-        self.validator = ProductionDataValidator(self.logger)
+        self.validator = ProductionDataValidator(self.logger, allow_historical_data)
         self.fill_strategy = SmartFillStrategy(self.logger)
         
         # Cache
@@ -1974,3 +1983,72 @@ class FeatureEngine:
         
         self.feature_selection_interval = seconds
         self.logger.info(f"Intervalo de seleção de features: {seconds} segundos")
+    def create_features_separated(self, candles_df: pd.DataFrame, 
+                                microstructure_df: pd.DataFrame, 
+                                indicators_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+        '''
+        Cria features separadas por tipo de dados
+        Compatibilidade com testes de integração
+        '''
+        try:
+            if candles_df.empty:
+                self.logger.warning("⚠️ DataFrame de candles vazio")
+                return {'features': pd.DataFrame(), 'metadata': {}}
+            
+            # Usar o método principal de features
+            if hasattr(self, 'create_features'):
+                features_df = self.create_features(candles_df)
+            else:
+                # Fallback: criar features básicas
+                features_df = self._create_basic_features(candles_df)
+            
+            return {
+                'features': features_df,
+                'candles': candles_df,
+                'microstructure': microstructure_df,
+                'indicators': indicators_df,
+                'metadata': {
+                    'features_count': len(features_df.columns),
+                    'data_points': len(features_df),
+                    'created_at': pd.Timestamp.now()
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erro em create_features_separated: {e}")
+            return {'features': pd.DataFrame(), 'metadata': {}}
+    
+    def _create_basic_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        '''Cria features básicas para fallback'''
+        try:
+            features = df.copy()
+            
+            # Features básicas
+            if 'close' in df.columns:
+                features['returns'] = df['close'].pct_change()
+                features['volatility'] = features['returns'].rolling(20).std()
+                
+                # EMAs simples
+                for period in [9, 20, 50]:
+                    features[f'ema_{period}'] = df['close'].ewm(span=period).mean()
+                
+                # RSI aproximado
+                delta = df['close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss
+                features['rsi_14'] = 100 - (100 / (1 + rs))
+                
+            # Volume features
+            if 'volume' in df.columns:
+                features['volume_ratio'] = df['volume'] / df['volume'].rolling(20).mean()
+                
+            # Preencher NaNs
+            features = features.fillna(method='bfill').fillna(0)
+            
+            self.logger.info(f"🔧 Features básicas criadas: {len(features.columns)} colunas")
+            return features
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erro em _create_basic_features: {e}")
+            return pd.DataFrame()

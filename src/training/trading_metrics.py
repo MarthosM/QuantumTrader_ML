@@ -13,7 +13,7 @@ class TradingMetricsAnalyzer:
         
     def calculate_trading_metrics(self, predictions: np.ndarray,
                                 actual_returns: np.ndarray,
-                                timestamps: pd.DatetimeIndex = None,
+                                timestamps: Optional[pd.DatetimeIndex] = None,
                                 position_size: float = 1.0) -> Dict:
         """
         Calcula métricas completas de trading
@@ -130,8 +130,8 @@ class TradingMetricsAnalyzer:
         if len(returns) == 0:
             return 0
         
-        # Calcula valor acumulado
-        cum_returns = (1 + returns).cumprod()
+        # Calcula valor acumulado - converter para pandas Series para ter cummax
+        cum_returns = pd.Series((1 + returns).cumprod())
         
         # Calcula running maximum
         running_max = cum_returns.cummax()
@@ -253,14 +253,14 @@ class TradingMetricsAnalyzer:
         }
     
     def _calculate_consistency_metrics(self, returns: np.ndarray,
-                                     timestamps: pd.DatetimeIndex = None) -> Dict:
+                                     timestamps: Optional[pd.DatetimeIndex] = None) -> Dict:
         """Calcula métricas de consistência"""
         metrics = {
             'positive_months': 0,
             'negative_months': 0,
-            'best_month': 0,
-            'worst_month': 0,
-            'monthly_sharpe': 0
+            'best_month': 0.0,
+            'worst_month': 0.0,
+            'monthly_sharpe': 0.0
         }
         
         if timestamps is not None and len(returns) > 20:
@@ -269,12 +269,12 @@ class TradingMetricsAnalyzer:
             monthly_returns = returns_series.groupby(pd.Grouper(freq='M')).sum()
             
             if len(monthly_returns) > 0:
-                metrics['positive_months'] = (monthly_returns > 0).sum()
-                metrics['negative_months'] = (monthly_returns < 0).sum()
-                metrics['best_month'] = monthly_returns.max()
-                metrics['worst_month'] = monthly_returns.min()
+                metrics['positive_months'] = int((monthly_returns > 0).sum())
+                metrics['negative_months'] = int((monthly_returns < 0).sum())
+                metrics['best_month'] = float(monthly_returns.max())
+                metrics['worst_month'] = float(monthly_returns.min())
                 metrics['monthly_sharpe'] = self._calculate_sharpe_ratio(
-                    monthly_returns.values, periods_per_year=12
+                    np.array(monthly_returns.values), periods_per_year=12
                 )
         
         return metrics

@@ -8,51 +8,23 @@ from datetime import datetime
 import json
 import yaml
 
+from .data_loader import TrainingDataLoader
+from .preprocessor import DataPreprocessor
+from .feature_pipeline import FeatureEngineeringPipeline
+from .model_trainer import ModelTrainer
+from .ensemble_trainer import EnsembleTrainer
+from .validation_engine import ValidationEngine
+from .hyperopt_engine import HyperparameterOptimizer
+from .trading_metrics import TradingMetricsAnalyzer
+from .performance_analyzer import PerformanceAnalyzer
+
 class TrainingOrchestrator:
     """Orquestrador central do sistema de treinamento"""
     
     def __init__(self, config: Dict):
         self.config = config
         self.logger = logging.getLogger(__name__)
-        
-        # Importações dinâmicas para evitar problemas de path
-        try:
-            # Tentar importações do sistema de treinamento
-            from data_loader import TrainingDataLoader
-            from preprocessor import DataPreprocessor
-            from feature_pipeline import FeatureEngineeringPipeline
-            from model_trainer import ModelTrainer
-            from ensemble_trainer import EnsembleTrainer
-            from validation_engine import ValidationEngine
-            from hyperopt_engine import HyperparameterOptimizer
-            from trading_metrics import TradingMetricsAnalyzer
-            from performance_analyzer import PerformanceAnalyzer
-            
-        except ImportError:
-            # Fallback para importações relativas
-            try:
-                from .data_loader import TrainingDataLoader
-                from .preprocessor import DataPreprocessor
-                from .feature_pipeline import FeatureEngineeringPipeline
-                from .model_trainer import ModelTrainer
-                from .ensemble_trainer import EnsembleTrainer
-                from .validation_engine import ValidationEngine
-                from .hyperopt_engine import HyperparameterOptimizer
-                from .trading_metrics import TradingMetricsAnalyzer
-                from .performance_analyzer import PerformanceAnalyzer
-                
-            except ImportError:
-                # Último recurso - importações absolutas
-                from training.data_loader import TrainingDataLoader
-                from training.preprocessor import DataPreprocessor
-                from training.feature_pipeline import FeatureEngineeringPipeline
-                from training.model_trainer import ModelTrainer
-                from training.ensemble_trainer import EnsembleTrainer
-                from training.validation_engine import ValidationEngine
-                from training.hyperopt_engine import HyperparameterOptimizer
-                from training.trading_metrics import TradingMetricsAnalyzer
-                from training.performance_analyzer import PerformanceAnalyzer
-        
+    
         # Componentes existentes do sistema - com fallbacks
         try:
             from src.model_manager import ModelManager
@@ -97,7 +69,7 @@ class TrainingOrchestrator:
                             start_date: datetime,
                             end_date: datetime,
                             symbols: List[str],
-                            target_metrics: Dict = None,
+                            target_metrics: Optional[Dict] = None,
                             validation_method: str = 'walk_forward') -> Dict:
         """
         Treina sistema completo end-to-end
@@ -127,9 +99,13 @@ class TrainingOrchestrator:
         
         # 2. Preprocessamento com RobustNaNHandler
         self.logger.info("Etapa 2: Preprocessamento")
+        
+        # Verificar se coluna target existe
+        target_col = 'target' if 'target' in raw_data.columns else 'close'  # Use 'close' as fallback
+        
         processed_data, targets = self.preprocessor.preprocess_training_data(
             raw_data,
-            target_col='target' if 'target' in raw_data.columns else None,
+            target_col=target_col,
             scale_features=False,  # Escalar depois da seleção
             raw_ohlcv=raw_data  # 🔧 Passar dados brutos para tratamento robusto de NaN
         )
@@ -500,11 +476,11 @@ class TrainingOrchestrator:
         
         if len(X_train) != len(y_train):
             self.logger.error(f"Desalinhamento X_train ({len(X_train)}) vs y_train ({len(y_train)})")
-            return None
+            return {}
             
         if len(X_val) != len(y_val):
             self.logger.error(f"Desalinhamento X_val ({len(X_val)}) vs y_val ({len(y_val)})")
-            return None
+            return {}
         
         # Treinar ensemble final
         final_ensemble = self.ensemble_trainer.train_ensemble(

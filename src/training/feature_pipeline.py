@@ -7,15 +7,23 @@ import logging
 from concurrent.futures import ProcessPoolExecutor
 
 import warnings
+
 warnings.filterwarnings('ignore', message='.*TA-Lib.*')
 
 # Importar sistemas robustos
 from .robust_technical_indicators import RobustTechnicalIndicators
 from .robust_nan_handler import RobustNaNHandler
 
-HAS_TALIB = False  # Forçar uso de implementações próprias
-logger = logging.getLogger(__name__)
-logger.info("🔧 Sistema Robusto: Indicadores Técnicos + Tratamento NaN ativado")
+# Check TA-Lib availability
+try:
+    import talib
+    HAS_TALIB = True
+    logger = logging.getLogger(__name__)
+    logger.info("📊 TA-Lib disponível - usando implementações nativas")
+except ImportError:
+    HAS_TALIB = False
+    logger = logging.getLogger(__name__)
+    logger.info("🔧 Sistema Robusto: Indicadores Técnicos + Tratamento NaN ativado")
 
 class FeatureEngineeringPipeline:
     """Pipeline otimizado de feature engineering para treinamento"""
@@ -68,7 +76,7 @@ class FeatureEngineeringPipeline:
         self.feature_cache = {}
         
     def create_training_features(self, data: pd.DataFrame,
-                               feature_groups: List[str] = None,
+                               feature_groups: Optional[List[str]] = None,
                                parallel: bool = True) -> pd.DataFrame:
         """
         🚀 VERSÃO ROBUSTA - Cria features usando sistema robusto
@@ -81,7 +89,7 @@ class FeatureEngineeringPipeline:
             # Importar e usar pipeline robusto
             from .robust_feature_pipeline import RobustFeaturePipeline
             
-            robust_pipeline = RobustFeaturePipeline(n_jobs=self.n_jobs)
+            robust_pipeline = RobustFeaturePipeline(n_jobs=self.n_jobs or os.cpu_count() or 1)
             features = robust_pipeline.create_features(data, feature_groups)
             
             self.logger.info(f"✅ Pipeline robusto concluído: {len(features.columns)} features")
@@ -93,10 +101,10 @@ class FeatureEngineeringPipeline:
             self.logger.error(f"❌ Erro no pipeline robusto: {type(e).__name__}: {e}")
             self.logger.warning(f"⚠️ Pipeline robusto falhou ({e}), usando implementação básica")
             
-            return self._create_features_fallback(data, feature_groups, parallel)
+            return self._create_features_fallback(data, feature_groups or ['technical', 'momentum', 'volatility', 'microstructure', 'patterns', 'entry_exit'], parallel)
     
     def _create_features_fallback(self, data: pd.DataFrame,
-                                feature_groups: List[str] = None,
+                                feature_groups: Optional[List[str]] = None,
                                 parallel: bool = True) -> pd.DataFrame:
         """
         Implementação fallback com correções básicas para NaN e TA-Lib
@@ -138,8 +146,8 @@ class FeatureEngineeringPipeline:
         nan_before = features_df.isna().sum().sum()
         
         # Aplicar forward fill limitado e depois backward fill
-        features_df = features_df.fillna(method='ffill', limit=5)
-        features_df = features_df.fillna(method='bfill', limit=5)
+        features_df = features_df.ffill(limit=5)
+        features_df = features_df.bfill(limit=5)
         
         # Remover features com muitos NaN (>50%)
         nan_threshold = len(features_df) * 0.5
@@ -231,27 +239,38 @@ class FeatureEngineeringPipeline:
                 
             elif group == 'microstructure':
                 # Features de microestrutura
-                if 'buy_volume' in data.columns and 'sell_volume' in data.columns:
+                try:
                     micro_features = self._calculate_microstructure_features(data)
                     features_df = pd.concat([features_df, micro_features], axis=1)
+                except Exception as e:
+                    self.logger.warning(f"Erro calculando features de microestrutura: {e}")
                     
             elif group == 'patterns':
                 # Padrões de preço
-                pattern_features = self._calculate_pattern_features(data)
-                features_df = pd.concat([features_df, pattern_features], axis=1)
+                try:
+                    pattern_features = self._calculate_pattern_features(data)
+                    features_df = pd.concat([features_df, pattern_features], axis=1)
+                except Exception as e:
+                    self.logger.warning(f"Erro calculando features de padrões: {e}")
 
             elif group == 'entry_exit':
                 # Features de entrada/saída
-                entry_exit_features = self._calculate_entry_exit_features(data)
-                features_df = pd.concat([features_df, entry_exit_features], axis=1)
+                try:
+                    entry_exit_features = self._calculate_entry_exit_features(data)
+                    features_df = pd.concat([features_df, entry_exit_features], axis=1)
+                except Exception as e:
+                    self.logger.warning(f"Erro calculando features de entrada/saída: {e}")
                 
         return features_df
     
     def _parallel_feature_calculation(self, data: pd.DataFrame,
                                     feature_groups: List[str]) -> pd.DataFrame:
         """Cálculo paralelo de features para grandes datasets"""
-        # Dividir dados em chunks
+        # Dividir dados em chunks - garantir que n_chunks seja um inteiro válido
         n_chunks = self.n_jobs
+        if n_chunks is None or n_chunks <= 0:
+            n_chunks = 1
+        
         chunk_size = len(data) // n_chunks
         chunks = []
         
@@ -337,6 +356,8 @@ class FeatureEngineeringPipeline:
             
             # RSI com cálculo robusto
             delta = data['close'].diff()
+            # Garantir que delta seja numérico para comparações
+            delta = pd.to_numeric(delta, errors='coerce')
             gain = delta.where(delta > 0, 0)
             loss = -delta.where(delta < 0, 0)
             
@@ -377,8 +398,8 @@ class FeatureEngineeringPipeline:
             
             # ATR com min_periods
             high_low = data['high'] - data['low']
-            high_close = np.abs(data['high'] - data['close'].shift())
-            low_close = np.abs(data['low'] - data['close'].shift())
+            high_close = (data['high'] - data['close'].shift()).abs()
+            low_close = (data['low'] - data['close'].shift()).abs()
             tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
             
             tech_features['atr'] = tr.rolling(window=14, min_periods=7).mean()
@@ -390,28 +411,32 @@ class FeatureEngineeringPipeline:
             ).mean()
             
             self.logger.info(f"✅ Calculados {len(tech_features.columns)} indicadores técnicos")
+            return tech_features
             
         except Exception as e:
-            self.logger.error(f"Erro calculando indicadores técnicos: {e}")
-            
-        return tech_features
+            self.logger.error(f"❌ Erro calculando indicadores técnicos: {e}")
+            # Retornar DataFrame vazio com índice correto em caso de erro
+            return pd.DataFrame(index=data.index)
     
     def _calculate_momentum_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Calcula features de momentum"""
         mom_features = pd.DataFrame(index=data.index)
         
-        # Momentum simples
-        for period in [1, 3, 5, 10, 15, 20]:
-            mom_features[f'momentum_{period}'] = data['close'] - data['close'].shift(period)
-            mom_features[f'momentum_pct_{period}'] = data['close'].pct_change(period) * 100
-        
         # ROC (Rate of Change) - calculado manualmente se talib não disponível
         for period in [5, 10, 20]:
-            if HAS_TALIB:
-                mom_features[f'roc_{period}'] = ta.ROC(data['close'], timeperiod=period)
-            else:
+            try:
+                if HAS_TALIB:
+                    import talib as ta # type: ignore
+                    mom_features[f'roc_{period}'] = ta.ROC(data['close'], timeperiod=period)
+                else:
+                    raise ImportError("TA-Lib not available")
+            except (ImportError, Exception):
                 # ROC manual: ((close - close_n_periods_ago) / close_n_periods_ago) * 100
-                mom_features[f'roc_{period}'] = ((data['close'] - data['close'].shift(period)) / data['close'].shift(period)) * 100
+                mom_features[f'roc_{period}'] = ((data['close'] - data['close'].shift(period)) / (data['close'].shift(period) + 1e-10)) * 100
+        
+        # Momentum básico
+        for period in [5, 10, 20]:
+            mom_features[f'momentum_{period}'] = data['close'] - data['close'].shift(period)
         
         # Returns
         for period in [5, 10, 20, 50]:
@@ -426,10 +451,11 @@ class FeatureEngineeringPipeline:
                 )
         
         # Acceleration
-        mom_features['price_acceleration'] = mom_features['momentum_5'].diff()
+        if 'momentum_5' in mom_features.columns:
+            mom_features['price_acceleration'] = mom_features['momentum_5'].diff()
         
         return mom_features
-    
+                    
     def _calculate_volatility_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Calcula features de volatilidade"""
         vol_features = pd.DataFrame(index=data.index)
@@ -443,30 +469,24 @@ class FeatureEngineeringPipeline:
         for period in [10, 20]:
             hl_ratio = np.log(data['high'] / data['low'])
             vol_features[f'parkinson_vol_{period}'] = (
-                hl_ratio.rolling(period).apply(lambda x: np.sqrt(np.sum(x**2) / (4 * period * np.log(2))))
+                pd.Series(hl_ratio, index=data.index).rolling(period).apply(lambda x: np.sqrt(np.sum(x**2) / (4 * period * np.log(2))))
             )
         
-        # Garman-Klass volatility
-        for period in [10, 20]:
-            hl_ratio = np.log(data['high'] / data['low'])
-            co_ratio = np.log(data['close'] / data['open'])
-            vol_features[f'gk_vol_{period}'] = (
-                0.5 * hl_ratio**2 - (2 * np.log(2) - 1) * co_ratio**2
-            ).rolling(period).mean().apply(np.sqrt)
-        
-        # Range-based metrics
-        vol_features['range_percent'] = (data['high'] - data['low']) / data['close'] * 100
-        
         # True Range - calculado manualmente se talib não disponível
-        if HAS_TALIB:
-            vol_features['true_range'] = ta.TRANGE(data['high'], data['low'], data['close'])
-        else:
+        try:
+            if HAS_TALIB:
+                import talib as ta # type: ignore
+                vol_features['true_range'] = ta.TRANGE(data['high'], data['low'], data['close'])
+            else:
+                raise ImportError("TA-Lib not available")
+        except (ImportError, Exception):
             # True Range manual
             hl = data['high'] - data['low']
             hc = np.abs(data['high'] - data['close'].shift(1))
             lc = np.abs(data['low'] - data['close'].shift(1))
             vol_features['true_range'] = np.maximum(hl, np.maximum(hc, lc))
         
+        # High-Low Range
         for period in [5, 10, 20]:
             vol_features[f'high_low_range_{period}'] = (
                 data['high'].rolling(period).max() - 
@@ -474,7 +494,8 @@ class FeatureEngineeringPipeline:
             ) / data['close'] * 100
         
         # Volatility ratios
-        vol_features['volatility_ratio'] = vol_features['volatility_10'] / vol_features['volatility_20']
+        if 'volatility_10' in vol_features.columns and 'volatility_20' in vol_features.columns:
+            vol_features['volatility_ratio'] = vol_features['volatility_10'] / (vol_features['volatility_20'] + 1e-10)
         
         return vol_features
     
@@ -614,15 +635,17 @@ class FeatureEngineeringPipeline:
             ).astype(int)
         
         # Price rejection at levels
-        entry_features['upper_wick_ratio'] = (
+        upper_wick_calc = (
             (data['high'] - np.maximum(data['open'], data['close'])) / 
             (data['high'] - data['low'])
-        ).fillna(0)
+        )
+        entry_features['upper_wick_ratio'] = pd.Series(upper_wick_calc, index=data.index).fillna(0)
         
-        entry_features['lower_wick_ratio'] = (
+        lower_wick_calc = (
             (np.minimum(data['open'], data['close']) - data['low']) / 
             (data['high'] - data['low'])
-        ).fillna(0)
+        )
+        entry_features['lower_wick_ratio'] = pd.Series(lower_wick_calc, index=data.index).fillna(0)
         
         # Momentum exhaustion
         if all(f'momentum_{p}' in data.columns for p in [5, 10, 20]):
@@ -632,20 +655,24 @@ class FeatureEngineeringPipeline:
             ).astype(int)
         
         return entry_features
-
+    
     def _calculate_pattern_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Calcula features baseadas em padrões de preço"""
         pattern_features = pd.DataFrame(index=data.index)
         
         # Candlestick patterns - usando fallbacks se TA-Lib não estiver disponível
-        if HAS_TALIB:
-            pattern_features['doji'] = ta.CDLDOJI(data['open'], data['high'], data['low'], data['close'])
-            pattern_features['hammer'] = ta.CDLHAMMER(data['open'], data['high'], data['low'], data['close'])
-            pattern_features['engulfing'] = ta.CDLENGULFING(data['open'], data['high'], data['low'], data['close'])
-            pattern_features['harami'] = ta.CDLHARAMI(data['open'], data['high'], data['low'], data['close'])
-            pattern_features['morning_star'] = ta.CDLMORNINGSTAR(data['open'], data['high'], data['low'], data['close'])
-            pattern_features['evening_star'] = ta.CDLEVENINGSTAR(data['open'], data['high'], data['low'], data['close'])
-        else:
+        try:
+            if HAS_TALIB:
+                import talib as ta  # type: ignore
+                pattern_features['doji'] = ta.CDLDOJI(data['open'], data['high'], data['low'], data['close'])
+                pattern_features['hammer'] = ta.CDLHAMMER(data['open'], data['high'], data['low'], data['close'])
+                pattern_features['engulfing'] = ta.CDLENGULFING(data['open'], data['high'], data['low'], data['close'])
+                pattern_features['harami'] = ta.CDLHARAMI(data['open'], data['high'], data['low'], data['close'])
+                pattern_features['morning_star'] = ta.CDLMORNINGSTAR(data['open'], data['high'], data['low'], data['close'])
+                pattern_features['evening_star'] = ta.CDLEVENINGSTAR(data['open'], data['high'], data['low'], data['close'])
+            else:
+                raise ImportError("TA-Lib not available")
+        except (ImportError, Exception):
             # Fallbacks simples para padrões
             # Doji - preço de abertura próximo do fechamento
             pattern_features['doji'] = np.where(
@@ -683,7 +710,7 @@ class FeatureEngineeringPipeline:
         pattern_features['s1'] = 2 * pattern_features['pivot'] - data['high']
         
         return pattern_features
-    
+   
     def _add_composite_features(self, features_df: pd.DataFrame) -> pd.DataFrame:
         """Adiciona features compostas e interações"""
         # RSI extremes
@@ -808,7 +835,7 @@ class FeatureEngineeringPipeline:
         """Limpa features com valores faltantes"""
         if method == 'forward_fill':
             # Forward fill primeiro, depois backward fill para início
-            features_df = features_df.fillna(method='ffill').fillna(method='bfill')
+            features_df = features_df.ffill().bfill()
         elif method == 'interpolate':
             # Interpolação para séries temporais
             features_df = features_df.interpolate(method='time', limit_direction='both')

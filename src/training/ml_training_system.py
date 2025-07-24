@@ -32,7 +32,7 @@ class MLTrainingSystem:
     Integra todas as etapas desde dados brutos até modelos prontos
     """
     
-    def __init__(self, config: Dict[str, Any] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.logger = logging.getLogger(__name__)
         
         # Configuração padrão
@@ -67,7 +67,7 @@ class MLTrainingSystem:
         self.config['reports_dir'].mkdir(parents=True, exist_ok=True)
     
     def prepare_training_data(self, raw_data: pd.DataFrame, 
-                            target_data: pd.Series = None) -> Tuple[pd.DataFrame, pd.Series]:
+                            target_data: Optional[pd.Series] = None) -> Tuple[pd.DataFrame, pd.Series]:
         """
         Prepara dados completos para treinamento
         
@@ -122,11 +122,14 @@ class MLTrainingSystem:
         tech_indicators = TechnicalIndicators()
         ml_features = MLFeatures()
         
-        # Calcular indicadores técnicos
-        indicators_df = tech_indicators.calculate_all_indicators(raw_data)
+        # Calcular indicadores técnicos (método correto: calculate_all)
+        indicators_df = tech_indicators.calculate_all(raw_data)
         
-        # Calcular features de ML
-        ml_features_df = ml_features.create_all_features(raw_data, indicators_df)
+        # Calcular features de ML (método correto: calculate_all)
+        ml_features_df = ml_features.calculate_all(
+            candles=raw_data, 
+            indicators=indicators_df
+        )
         
         # Combinar todas as features
         all_features = pd.concat([indicators_df, ml_features_df], axis=1)
@@ -135,6 +138,8 @@ class MLTrainingSystem:
         all_features = all_features.loc[:, ~all_features.columns.duplicated()]
         
         self.logger.info(f"Features geradas: {len(all_features.columns)}")
+        self.logger.info(f"  • Indicadores técnicos: {len(indicators_df.columns)}")
+        self.logger.info(f"  • Features ML: {len(ml_features_df.columns)}")
         
         return all_features
     
@@ -309,8 +314,8 @@ class MLTrainingSystem:
         )
         
         # Calcular métricas
-        y_pred_train = model.predict(X_train)
-        y_pred_test = model.predict(X_test)
+        y_pred_train = np.array(model.predict(X_train))
+        y_pred_test = np.array(model.predict(X_test))
         
         train_accuracy = accuracy_score(y_train, y_pred_train)
         test_accuracy = accuracy_score(y_test, y_pred_test)

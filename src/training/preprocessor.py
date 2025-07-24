@@ -27,7 +27,7 @@ class DataPreprocessor:
     def preprocess_training_data(self, data: pd.DataFrame, 
                                target_col: str = 'target',
                                scale_features: bool = True,
-                               raw_ohlcv: pd.DataFrame = None) -> Tuple[pd.DataFrame, pd.Series]:
+                               raw_ohlcv: Optional[pd.DataFrame] = None) -> Tuple[pd.DataFrame, pd.Series]:
         """
         Preprocessa dados para treinamento
         
@@ -171,7 +171,7 @@ class DataPreprocessor:
                     
                 elif 'price' in column or 'close' in column or 'vwap' in column:
                     # Preços: forward/backward fill
-                    processed[column] = processed[column].fillna(method='ffill').fillna(method='bfill')
+                    processed[column] = processed[column].ffill().bfill()
                     
                 else:
                     # Outros: mediana

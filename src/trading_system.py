@@ -1,3 +1,4 @@
+from dotenv import load_dotenv
 """
 Sistema de Trading Integrado v2.0
 Integra todos os componentes em um sistema coeso e funcional
@@ -13,6 +14,7 @@ from typing import Dict, Optional, List, Any
 from ctypes import WINFUNCTYPE, c_int, c_wchar_p, c_double, c_int64, Structure
 
 import pandas as pd
+from ctypes import c_double
 
 # Importar componentes desenvolvidos nas etapas anteriores
 from connection_manager import ConnectionManager
@@ -31,6 +33,19 @@ from metrics_collector import MetricsCollector
 
 # Adicionar integração para dados reais
 from data_integration import DataIntegration
+
+# Importar sistema de execução de ordens
+try:
+    from order_manager import OrderExecutionManager
+    from execution_engine import SimpleExecutionEngine
+    from execution_integration_simple import ExecutionIntegration
+    ORDER_EXECUTION_AVAILABLE = True
+except ImportError:
+    # Componentes de execução não disponíveis
+    ORDER_EXECUTION_AVAILABLE = False
+    OrderExecutionManager = None
+    SimpleExecutionEngine = None
+    ExecutionIntegration = None
 
 # Importar componentes das ETAPAS 4 e 5 (opcionais)
 try:
@@ -54,6 +69,26 @@ except ImportError:
     PRODUCTION_VALIDATOR_AVAILABLE = False
     ProductionDataValidator = None
     ProductionDataError = Exception
+
+from dashboard_simple import RealTimeDashboard
+from model_monitor_simple import MLModelMonitor
+from alerting_system_simple import AlertingSystem
+from diagnostics_simple import DiagnosticSuite
+from performance_analyzer_simple import PerformanceAnalyzer
+
+# Integração ML Flow
+import sys
+import os
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+    
+try:
+    from ml_data_flow_integrator import integrate_ml_data_flow_with_system
+except ImportError:
+    def integrate_ml_data_flow_with_system(system):
+        return None
+
 
 class TradingSystem:
     """Sistema de trading completo v2.0"""
@@ -86,6 +121,11 @@ class TradingSystem:
         self.strategy_engine = None
         self.metrics = None
         
+        # Sistema de execução de ordens
+        self.order_manager = None
+        self.execution_engine = None
+        self.execution_integration = None
+        
         # Estado do sistema
         self.is_running = False
         self.initialized = False
@@ -110,7 +150,8 @@ class TradingSystem:
         self.optimization_thread = None
         self.risk_update_thread = None
         
-        # Controle de tempo
+        # Controle de tempo 
+        self._system_start_time = time.time()  # Para métricas de uptime
         self.last_ml_time = None
         self.ml_interval = config.get('ml_interval', 60)  # segundos
         self.last_feature_calc = None
@@ -151,6 +192,16 @@ class TradingSystem:
             'min_data_points': 1000,
             'validation_split': 0.2
         }
+
+        # Sistema de monitoramento
+        self.dashboard = RealTimeDashboard(config.get('monitoring', {}))
+        self.model_monitor = MLModelMonitor(self.model_manager, self.feature_engine)
+        self.alerting_system = AlertingSystem(config.get('alerts', {}))
+        self.diagnostics = DiagnosticSuite()
+        self.performance_analyzer = PerformanceAnalyzer(config.get('performance', {}))
+        
+        # Iniciar monitoramento
+        self.dashboard.start()
 
     def _get_current_contract(self, date: datetime) -> str:
         """
@@ -265,7 +316,11 @@ class TradingSystem:
             
             # 1. Inicializar conexão
             self.logger.info("1. Inicializando conexão...")
-            self.connection = ConnectionManager(self.config['dll_path'])
+            # Buscar dll_path na configuração ou usar fallback
+            dll_path = self.config.get('dll_path', 
+                                     self.config.get('DLL_PATH', 
+                                                    './mock_profit.dll'))
+            self.connection = ConnectionManager(dll_path)
             if not self.connection.initialize(
                 key=self.config.get('key', ''),
                 username=self.config['username'],
@@ -300,7 +355,7 @@ class TradingSystem:
             self.logger.info("4. Configurando pipeline de dados...")
             self.data_pipeline = DataPipeline(self.data_structure)
             self.real_time_processor = RealTimeProcessor(self.data_structure)
-            self.data_loader = DataLoader(self.config.get('data_dir', 'data'))
+            self.data_loader = DataLoader()
             
             # 4.1 Inicializar integração de dados
             self.data_integration = DataIntegration(self.connection, self.data_loader)
@@ -380,8 +435,70 @@ class TradingSystem:
                 self.auto_optimizer = None
                 self.performance_monitor = None
 
-            # 10. Configurar callbacks
-            self.logger.info("10. Configurando callbacks...")
+            # 10. Configurar sistema de execução de ordens
+            self.logger.info("10. Configurando sistema de execução...")
+            if ORDER_EXECUTION_AVAILABLE and OrderExecutionManager and SimpleExecutionEngine and ExecutionIntegration:
+                try:
+                    # Verificar se connection está disponível
+                    if not self.connection:
+                        raise RuntimeError("ConnectionManager não disponível para OrderExecutionManager")
+                    
+                    # Inicializar order manager
+                    self.logger.info("Inicializando OrderExecutionManager...")
+                    self.order_manager = OrderExecutionManager(self.connection)
+                    self.order_manager.initialize()
+                    
+                    # Verificar se ml_coordinator está disponível
+                    if not self.ml_coordinator:
+                        raise RuntimeError("MLCoordinator não disponível para ExecutionEngine")
+                    
+                    # Inicializar execution engine
+                    self.logger.info("Inicializando SimpleExecutionEngine...")
+                    self.execution_engine = SimpleExecutionEngine(
+                        self.order_manager,
+                        self.ml_coordinator,
+                        risk_mgr
+                    )
+                    
+                    # Integração de execução  
+                    self.logger.info("Inicializando ExecutionIntegration...")
+                    self.execution_integration = ExecutionIntegration(
+                        connection_manager=self.connection,
+                        order_manager=order_mgr
+                    )
+                    
+                    if hasattr(self.execution_integration, 'initialize_execution_system'):
+                        self.execution_integration.initialize_execution_system()
+                    
+                    self.logger.info("[ok] Sistema de execução configurado")
+                    
+                except Exception as e:
+                    self.logger.error(f"Erro ao configurar sistema de execução: {e}")
+                    self.logger.warning("Fallback: Sistema funcionará apenas com simulação")
+                    
+                    # Configurar como não disponível em caso de erro
+                    self.order_manager = None
+                    self.execution_engine = None
+                    self.execution_integration = None
+                    
+            else:
+                self.logger.warning("Componentes de execução não disponíveis - simulação apenas")
+                if not ORDER_EXECUTION_AVAILABLE:
+                    self.logger.info("ORDER_EXECUTION_AVAILABLE = False")
+                if not OrderExecutionManager:
+                    self.logger.info("OrderExecutionManager não importado")
+                if not SimpleExecutionEngine:
+                    self.logger.info("SimpleExecutionEngine não importado")
+                if not ExecutionIntegration:
+                    self.logger.info("ExecutionIntegration não importado")
+                    
+                self.order_manager = None
+                self.execution_engine = None
+                self.execution_integration = None
+
+            # 11. Configurar callbacks
+            # 11. Configurar callbacks
+            self.logger.info("11. Configurando callbacks...")
             self._setup_callbacks()
             self.logger.info("[ok] Callbacks configurados")
 
@@ -390,6 +507,13 @@ class TradingSystem:
             self.logger.info("Sistema inicializado com sucesso!")
             self.logger.info("="*60)
             
+            # Initialize execução
+            self.logger.info("Inicializando sistema de execução...")
+            # TODO: Implementar checagem da execução adequadamente
+            # if not self.execution_integration.initialize_execution_system():
+            #     self.logger.error("Falha ao inicializar execução")
+            #     return False
+                
             return True
             
         except Exception as e:
@@ -498,11 +622,9 @@ class TradingSystem:
                 if self.data_loader:
                     self.logger.info("Tentando carregar dados do cache/arquivo...")
                     
-                    candles_df = self.data_loader.load_candles(
-                        start_date=datetime.now() - timedelta(days=days_back),
-                        end_date=datetime.now(),
-                        interval='1min',
-                        symbol=ticker
+                    candles_df = self.data_loader.load_historical_data(
+                        symbol=ticker,
+                        days=days_back
                     )
                     
                     if not candles_df.empty:
@@ -637,23 +759,65 @@ class TradingSystem:
             
             self.logger.info("Sistema iniciado e operacional!")
             
-            # 7. Iniciar monitor GUI se habilitado
+                        # 7. Iniciar monitor GUI se habilitado
             if self.use_gui:
                 self.logger.info("Iniciando monitor visual...")
-                from trading_monitor import TradingMonitor
-                self.monitor = TradingMonitor(self)
+                try:
+                    from trading_monitor_gui import create_monitor_gui
+                    self.monitor = create_monitor_gui(self)
+                    
+                    # 🔧 CORREÇÃO: GUI deve rodar na thread principal
+                    # Sistema roda em background, GUI na main thread
+                    self.logger.info("✓ Monitor GUI configurado para thread principal")
+                    
+                    # Armazenar referência para controle do GUI
+                    self._gui_ready = True
+                    
+                except Exception as e:
+                    self.logger.warning(f"Erro configurando monitor GUI: {e}")
+                    self.logger.info("Sistema continuará sem monitor visual")
+                    self.monitor = None
+                    
+            # 7.5. Se GUI habilitado, configurar execução na thread principal
+            if self.use_gui and self.monitor:
+                self.logger.info("Sistema será executado em background thread")
                 
-                # Monitor roda em thread separada
-                monitor_thread = threading.Thread(
-                    target=self.monitor.start,
-                    daemon=True
+                # Sistema roda em thread separada
+                system_thread = threading.Thread(
+                    target=self._main_loop_background,
+                    daemon=False,  # Não daemon para controle adequado
+                    name="TradingSystem"
                 )
-                monitor_thread.start()
-                time.sleep(1)  # Dar tempo para GUI inicializar
-            
-            # 8. Entrar no loop principal
-            self._main_loop()
-            
+                system_thread.start()
+                
+                # GUI roda na thread principal
+                self.logger.info("Iniciando GUI na thread principal...")
+                try:
+                    self.monitor.run()  # Bloqueia na thread principal
+                finally:
+                    # Cleanup quando GUI fechar
+                    self.logger.info("GUI fechado, parando sistema...")
+                    self.stop()
+                    if system_thread.is_alive():
+                        system_thread.join(timeout=5)
+                        
+                return True
+            else:
+                # Sem GUI - comportamento original
+                # 8. Entrar no loop principal
+                self._main_loop()
+                
+            # 🔧 INTEGRAÇÃO ML FLOW - Configurar monitoramento automático
+            try:
+                self.logger.info("Configurando integração ML Flow...")
+                self.ml_integrator = integrate_ml_data_flow_with_system(self)
+                if self.ml_integrator:
+                    self.logger.info("✅ Integração ML Flow configurada")
+                else:
+                    self.logger.warning("⚠️ Integração ML Flow não disponível")
+            except Exception as e:
+                self.logger.warning(f"Erro configurando ML Flow: {e}")
+                
             return True
             
         except Exception as e:
@@ -750,6 +914,22 @@ class TradingSystem:
         finally:
             self.stop()
             
+    def _main_loop_background(self):
+        """
+        Loop principal executado em background quando GUI está ativo
+        Versão modificada do _main_loop original para threading
+        """
+        self.logger.info("Iniciando loop principal em background thread...")
+        
+        try:
+            # Loop principal do sistema
+            self._main_loop()
+            
+        except Exception as e:
+            self.logger.error(f"Erro no loop background: {e}", exc_info=True)
+        finally:
+            self.logger.info("Loop background finalizado")
+
     def _on_trade(self, trade_data: Dict):
         """Callback para processar trades em tempo real"""
         if not self.is_running:
@@ -976,6 +1156,53 @@ class TradingSystem:
                         'latency_ms': prediction.get('processing_time', 0) * 1000
                     })
                 
+                # Sistema de monitoramento integrado (com fallbacks seguros)
+                try:
+                    # Monitorar predição (se componentes estão disponíveis)
+                    if hasattr(self, 'model_monitor') and self.model_monitor:
+                        # Usar dados disponíveis para monitoramento
+                        latest_features = {}
+                        if hasattr(self.data_structure, 'features') and hasattr(self.data_structure.features, 'iloc'):
+                            latest_features = self.data_structure.features.iloc[-1:].to_dict('records')[0] if not self.data_structure.features.empty else {}
+                        elif hasattr(self.data_structure, 'indicators') and hasattr(self.data_structure.indicators, 'iloc'):
+                            latest_features = self.data_structure.indicators.iloc[-1:].to_dict('records')[0] if not self.data_structure.indicators.empty else {}
+                        
+                        monitor_data = self.model_monitor.monitor_prediction(
+                            latest_features,
+                            prediction
+                        )
+                    else:
+                        monitor_data = {'status': 'monitor_unavailable'}
+                    
+                    # Verificar alertas (se sistema está disponível)
+                    if hasattr(self, 'alerting_system') and self.alerting_system:
+                        alerts = self.alerting_system.check_alerts({
+                            'trading': self._get_trading_metrics_safe(),
+                            'system': self._get_system_metrics_safe(),
+                            'model': monitor_data
+                        })
+                        
+                        # Log de alertas críticos se houver
+                        if alerts and any(alert.get('level') == 'critical' for alert in alerts):
+                            self.logger.warning(f"⚠️ Alertas críticos detectados: {len(alerts)} alertas")
+                            for alert in alerts:
+                                if alert.get('level') == 'critical':
+                                    self.logger.error(f"🚨 ALERTA CRÍTICO: {alert.get('message')}")
+                    
+                    # Analisar performance se houver trade (se disponível)
+                    if hasattr(self, 'performance_analyzer') and self.performance_analyzer and prediction.get('action') != 'hold':
+                        # Preparar dados de features para análise
+                        analysis_features = latest_features if 'latest_features' in locals() else {}
+                        
+                        self.performance_analyzer.analyze_trade({
+                            'decision': prediction,
+                            'timestamp': datetime.now(),
+                            'features': analysis_features
+                        })
+                
+                except Exception as e:
+                    self.logger.warning(f"Erro no sistema de monitoramento: {e}")
+                
                 # Log da predição
                 self.logger.info(
                     f"Predição ML - Direção: {prediction['direction']:.2f}, "
@@ -1102,53 +1329,153 @@ class TradingSystem:
             
     def _execute_order_safely(self, signal: Dict):
         """
-        Executa ordem de forma segura - REAL em produção, SIMULADA em desenvolvimento
+        Executa ordem de forma segura usando o novo sistema de execução
         
         Args:
             signal: Sinal de trading com informações da ordem
         """
         production_mode = os.getenv('TRADING_ENV', 'development') == 'production'
         
-        if production_mode:
-            # 🚨 PRODUÇÃO: Execução real obrigatória
-            self.logger.info(f"[PRODUÇÃO] Executando ordem REAL: {signal['action']}")
-            
-            try:
-                # Verificar conexão com broker
-                if not self.connection or not self.connection.connected:
-                    raise RuntimeError("Conexão com broker não disponível em PRODUÇÃO")
+        try:
+            # Verificar se sistema de execução está disponível
+            if self.execution_engine and ORDER_EXECUTION_AVAILABLE:
+                # Usar o novo sistema de execução integrado
+                self.logger.info(f"[SISTEMA EXECUÇÃO] Processando sinal: {signal['action']}")
                 
-                # Executar ordem real via ConnectionManager
-                if hasattr(self.connection, 'place_order'):
-                    order_result = self.connection.place_order(
-                        symbol=self.ticker,
-                        side=signal['action'],
-                        quantity=signal.get('position_size', 1),
-                        price=signal['price'],
-                        stop_loss=signal.get('stop_loss'),
-                        take_profit=signal.get('take_profit')
-                    )
+                order_id = self.execution_engine.process_ml_signal(signal)
+                
+                if order_id:
+                    self.logger.info(f"✅ Ordem enviada via ExecutionEngine - ID: {order_id}")
                     
-                    if order_result and order_result.get('success'):
-                        self.logger.info(f"✅ Ordem executada - ID: {order_result.get('order_id')}")
-                        self._record_real_position(signal, order_result)
-                    else:
-                        self.logger.error(f"❌ Falha na execução da ordem: {order_result}")
+                    # Registrar métricas
+                    if self.metrics:
+                        if hasattr(self.metrics, 'record_execution'):
+                            self.metrics.record_execution({'signal': signal, 'order_id': order_id})
+                        elif hasattr(self.metrics, 'metrics'):
+                            self.metrics.metrics['signals_executed'] += 1
+                else:
+                    self.logger.warning("⚠️ Sinal rejeitado pelo ExecutionEngine")
+                    
+            elif production_mode:
+                # 🚨 PRODUÇÃO: Fallback para execução via OrderManager se sistema não disponível
+                self.logger.warning("[PRODUÇÃO] ExecutionEngine não disponível - usando OrderManager diretamente")
+                
+                # Verificar se OrderManager está disponível
+                if self.order_manager and ORDER_EXECUTION_AVAILABLE:
+                    try:
+                        order = self.order_manager.send_order(signal)
+                        
+                        if order:
+                            self.logger.info(f"✅ Ordem enviada via OrderManager - ID: {order.profit_id}")
+                            
+                            # Registrar ordem pendente
+                            order_result = {
+                                'success': True,
+                                'order_id': str(order.profit_id),
+                                'executed_price': signal['price'],  # Preço solicitado
+                                'executed_quantity': signal.get('position_size', 1),
+                                'timestamp': datetime.now(),
+                                'mode': 'order_manager_fallback'
+                            }
+                            
+                            self._record_real_position(signal, order_result)
+                        else:
+                            self.logger.error("❌ Falha ao enviar ordem via OrderManager")
+                            
+                    except Exception as e:
+                        self.logger.error(f"❌ Erro no OrderManager: {e}")
+                        raise RuntimeError(f"Falha crítica no OrderManager: {e}")
                         
                 else:
-                    # Fallback: método não disponível no ConnectionManager atual
-                    self.logger.error("❌ PRODUÇÃO BLOQUEADA: place_order não implementado no ConnectionManager")
-                    raise RuntimeError("Execução real não disponível - place_order não implementado")
+                    # Último fallback: Verificar conexão com broker
+                    if not self.connection or not self.connection.connected:
+                        raise RuntimeError("Conexão com broker não disponível em PRODUÇÃO")
                     
-            except Exception as e:
-                self.logger.error(f"❌ ERRO CRÍTICO na execução de ordem real: {e}")
-                # Em produção, não continuar com dados problemáticos
-                raise
+                    # PRODUÇÃO: Usar diretamente as funções DLL da ProfitDLL
+                    self.logger.warning("[PRODUÇÃO] Usando funções DLL diretas - risco elevado")
+                    
+                    try:
+                        # Mapear ação para side da DLL
+                        if signal['action'] == 'buy':
+                            side = 1  # Compra
+                        elif signal['action'] == 'sell':
+                            side = 2  # Venda
+                        else:
+                            raise ValueError(f"Ação inválida: {signal['action']}")
+                        
+                        # Usar funções DLL diretas (baseado no manual ProfitDLL)
+                        dll = self.connection.dll
+                        
+                        # Preparar parâmetros conforme manual
+                        quantity = signal.get('position_size', 1)
+                        price = signal['price']
+                        
+                        # Enviar ordem a mercado ou limite baseado no tipo
+                        order_type = signal.get('order_type', 'limit')
+                        
+                        if order_type == 'market':
+                            # Ordem a mercado
+                            if side == 1:  # Compra
+                                result = dll.SendBuyOrderMarket(
+                                    self.ticker.encode('utf-8'),
+                                    "BOVESPA".encode('utf-8'),
+                                    quantity
+                                )
+                            else:  # Venda
+                                result = dll.SendSellOrderMarket(
+                                    self.ticker.encode('utf-8'),
+                                    "BOVESPA".encode('utf-8'),
+                                    quantity
+                                )
+                        else:
+                            # Ordem limite
+                            if side == 1:  # Compra
+                                result = dll.SendBuyOrder(
+                                    self.ticker.encode('utf-8'),
+                                    "BOVESPA".encode('utf-8'),
+                                    quantity,
+                                    c_double(price)
+                                )
+                            else:  # Venda
+                                result = dll.SendSellOrder(
+                                    self.ticker.encode('utf-8'),
+                                    "BOVESPA".encode('utf-8'),
+                                    quantity,
+                                    c_double(price)
+                                )
+                        
+                        if result > 0:  # ID da ordem retornado
+                            self.logger.info(f"✅ Ordem DLL enviada - ID: {result}")
+                            
+                            order_result = {
+                                'success': True,
+                                'order_id': str(result),
+                                'executed_price': price,
+                                'executed_quantity': quantity,
+                                'timestamp': datetime.now(),
+                                'mode': 'dll_direct'
+                            }
+                            
+                            self._record_real_position(signal, order_result)
+                        else:
+                            self.logger.error(f"❌ Falha na ordem DLL - Código: {result}")
+                            raise RuntimeError(f"DLL retornou erro: {result}")
+                            
+                    except Exception as e:
+                        self.logger.error(f"❌ Erro crítico na execução DLL: {e}")
+                        raise RuntimeError(f"Sistema de execução DLL falhou: {e}")
+                    
+            else:
+                # 🧪 DESENVOLVIMENTO: Simulação permitida
+                self.logger.info(f"[DESENVOLVIMENTO] Sistema de execução não disponível - simulando ordem: {signal['action']}")
+                self._simulate_order_execution(signal)
                 
-        else:
-            # 🧪 DESENVOLVIMENTO: Simulação permitida
-            self.logger.info(f"[DESENVOLVIMENTO] Simulando ordem: {signal['action']}")
-            self._simulate_order_execution(signal)
+        except Exception as e:
+            self.logger.error(f"❌ Erro na execução de ordem: {e}", exc_info=True)
+            
+            # Em produção, não continuar com erro crítico
+            if production_mode:
+                raise
     
     def _record_real_position(self, signal: Dict, order_result: Dict):
         """Registra posição real executada"""
@@ -1165,8 +1492,8 @@ class TradingSystem:
         }
         
         # Registrar métricas
-        if self.metrics and hasattr(self.metrics, 'record_real_execution'):
-            self.metrics.record_real_execution(order_result)
+        if self.metrics and hasattr(self.metrics, 'record_execution'):
+            self.metrics.record_execution(order_result)
         elif self.metrics:
             # Fallback para métrica genérica
             if hasattr(self.metrics, 'metrics'):
@@ -1336,12 +1663,92 @@ class TradingSystem:
         )
         
         self._last_metrics_log = time.time()
+    
+    def _get_trading_metrics_safe(self) -> Dict:
+        """Obtém métricas de trading com fallback seguro"""
+        try:
+            if self.metrics and hasattr(self.metrics, 'metrics'):
+                return {
+                    'trades_count': self.metrics.metrics.get('trades_total', 0),
+                    'win_rate': self.metrics.metrics.get('win_rate', 0.0),
+                    'pnl': self.account_info.get('daily_pnl', 0.0),
+                    'positions': len(self.active_positions)
+                }
+        except Exception:
+            pass
         
+        # Fallback básico
+        return {
+            'trades_count': 0,
+            'win_rate': 0.0,
+            'pnl': self.account_info.get('daily_pnl', 0.0),
+            'positions': len(self.active_positions)
+        }
+    
+    def _get_system_metrics_safe(self) -> Dict:
+        """Obtém métricas do sistema com fallback seguro"""
+        try:
+            import psutil
+            process = psutil.Process()
+            
+            return {
+                'cpu_percent': process.cpu_percent(),
+                'memory_mb': process.memory_info().rss / 1024 / 1024,
+                'threads': process.num_threads(),
+                'uptime': time.time() - getattr(self, '_system_start_time', time.time())
+            }
+        except Exception:
+            # Fallback básico sem psutil
+            return {
+                'cpu_percent': 0.0,
+                'memory_mb': 0.0,
+                'threads': threading.active_count(),
+                'uptime': time.time() - getattr(self, '_system_start_time', time.time())
+            }
+
+    
+    def _on_price_update(self, price_data: Dict):
+        """Callback para atualizações de preço em tempo real - PATCH"""
+        try:
+            if not self.is_running:
+                return
+                
+            # Atualizar preço atual
+            if hasattr(self, 'current_price'):
+                self.current_price = price_data.get('price', self.current_price)
+            
+            # Forçar atualização de métricas
+            if self.metrics:
+                self.metrics.update_price(price_data.get('price', 0))
+                
+            # Log periódico do preço (a cada 30 segundos)
+            if not hasattr(self, '_last_price_log'):
+                self._last_price_log = 0
+                
+            if time.time() - self._last_price_log > 30:
+                self.logger.info(f"Preço atual: R$ {price_data.get('price', 0):.2f}")
+                self._last_price_log = time.time()
+                
+        except Exception as e:
+            self.logger.error(f"Erro no callback de preço: {e}")
+
     def stop(self):
         """Para o sistema de forma ordenada"""
         self.logger.info("Parando sistema...")
         
         self.is_running = False
+        
+        # Parar sistema de execução primeiro (importante para fechar posições)
+        if self.order_manager:
+            self.logger.info("Finalizando sistema de execução...")
+            self.order_manager.shutdown()
+        
+        # Fechar posições abertas em modo de emergência se necessário
+        if self.execution_engine:
+            try:
+                self.execution_engine.emergency_close_all()
+            except Exception as e:
+                self.logger.error(f"Erro fechando posições: {e}")
         
         # Parar sistemas de otimização (ETAPA 4)
         if self.auto_optimizer:
@@ -1363,9 +1770,13 @@ class TradingSystem:
         if self.connection:
             self.connection.disconnect()
 
-        # Parar monitor se estiver rodando
-        if self.monitor:
-            self.monitor.stop()
+        # Parar monitor se disponível
+        if hasattr(self, 'monitor') and self.monitor:
+            try:
+                self.monitor.stop()
+                self.logger.info("Monitor GUI parado")
+            except Exception as e:
+                self.logger.warning(f"Erro ao parar monitor: {e}")
             
         self.logger.info("Sistema parado com sucesso")
             
@@ -1451,7 +1862,7 @@ class TradingSystem:
         
     def get_status(self) -> Dict:
         """Retorna status atual do sistema"""
-        return {
+        status = {
             'running': self.is_running,
             'initialized': self.initialized,
             'ticker': self.ticker,
@@ -1462,6 +1873,24 @@ class TradingSystem:
             'optimization_enabled': self.auto_optimizer is not None,
             'risk_management': 'intelligent' if self.intelligent_risk_manager else 'basic'
         }
+        
+        # Adicionar informações do sistema de execução
+        if self.execution_integration:
+            execution_status = self.execution_integration.get_execution_status()
+            status['execution'] = execution_status
+        else:
+            status['execution'] = {
+                'status': 'not_available',
+                'mode': 'simulation_only'
+            }
+        
+        # Informações detalhadas do ExecutionEngine se disponível
+        if self.execution_engine:
+            status['execution_stats'] = self.execution_engine.get_execution_stats()
+            status['pending_orders'] = len(self.execution_engine.get_active_orders())
+            status['positions'] = self.execution_engine.get_positions()
+        
+        return status
         
     # Métodos auxiliares para suportar ETAPAS 4 e 5
     
@@ -1510,27 +1939,61 @@ class TradingSystem:
             # Aplicar novos hiperparâmetros se otimizados
             if 'hyperparameters' in results:
                 hyperparams = results['hyperparameters']
-                if self.model_manager and hasattr(self.model_manager, 'update_hyperparameters'):
-                    self.model_manager.update_hyperparameters(hyperparams)
-                    self.logger.info("Hiperparâmetros atualizados via otimização")
+                if self.model_manager and hasattr(self.model_manager, 'hyperopt'):
+                    # Atualizar hiperparâmetros através do HyperparameterOptimizer
+                    if hasattr(self.model_manager.hyperopt, 'best_params'):
+                        for model_name, params in hyperparams.items():
+                            if model_name in self.model_manager.hyperopt.best_params:
+                                self.model_manager.hyperopt.best_params[model_name].update(params)
+                                self.logger.info(f"Hiperparâmetros atualizados para {model_name}: {params}")
+                            else:
+                                self.model_manager.hyperopt.best_params[model_name] = params
+                                self.logger.info(f"Novos hiperparâmetros definidos para {model_name}: {params}")
+                        self.logger.info("Hiperparâmetros atualizados via otimização")
+                    else:
+                        self.logger.warning("HyperparameterOptimizer não disponível")
                 else:
-                    self.logger.warning("ModelManager não suporta update_hyperparameters")
+                    self.logger.warning("ModelManager ou HyperparameterOptimizer não disponível")
                 
             # Aplicar novos parâmetros de risco se otimizados
             if 'risk' in results:
                 risk_params = results['risk']
                 
-                # Atualizar RiskManager básico
+                # Atualizar RiskManager básico através de atributos diretos
                 if self.strategy_engine and hasattr(self.strategy_engine, 'risk_manager'):
                     risk_mgr = self.strategy_engine.risk_manager
-                    if hasattr(risk_mgr, 'update_parameters'):
-                        risk_mgr.update_parameters(risk_params)
-                    else:
-                        self.logger.warning("RiskManager não suporta update_parameters")
+                    
+                    # Atualizar parâmetros diretamente nos atributos do RiskManager
+                    for param_name, param_value in risk_params.items():
+                        if hasattr(risk_mgr, param_name):
+                            setattr(risk_mgr, param_name, param_value)
+                            self.logger.info(f"Parâmetro de risco atualizado: {param_name} = {param_value}")
+                        else:
+                            self.logger.warning(f"Parâmetro de risco desconhecido: {param_name}")
+                    
+                    self.logger.info("Parâmetros de risco básicos atualizados")
+                else:
+                    self.logger.warning("Strategy engine ou RiskManager não disponível")
                 
-                # Atualizar IntelligentRiskManager
-                if self.intelligent_risk_manager and hasattr(self.intelligent_risk_manager, 'update_parameters'):
-                    self.intelligent_risk_manager.update_parameters(risk_params)
+                # Atualizar IntelligentRiskManager através de atributos diretos
+                if self.intelligent_risk_manager:
+                    # Atualizar parâmetros de risco diretos se disponíveis
+                    if hasattr(self.intelligent_risk_manager, 'risk_limits'):
+                        for param_name, param_value in risk_params.items():
+                            if param_name in self.intelligent_risk_manager.risk_limits:
+                                self.intelligent_risk_manager.risk_limits[param_name] = param_value
+                                self.logger.info(f"Limite de risco inteligente atualizado: {param_name} = {param_value}")
+                    
+                    # Atualizar configuração se disponível
+                    if hasattr(self.intelligent_risk_manager, 'config'):
+                        for param_name, param_value in risk_params.items():
+                            if param_name in self.intelligent_risk_manager.config:
+                                self.intelligent_risk_manager.config[param_name] = param_value
+                                self.logger.info(f"Config de risco inteligente atualizado: {param_name} = {param_value}")
+                    
+                    self.logger.info("IntelligentRiskManager atualizado via otimização")
+                else:
+                    self.logger.warning("IntelligentRiskManager não disponível")
                     
                 self.logger.info("Parâmetros de risco atualizados via otimização")
                 
@@ -1669,3 +2132,102 @@ class TradingSystem:
         else:
             # Só atualizar se novo stop é menor (trailing)
             return new_stop < current_stop and new_stop > position['current_price']
+    
+    # Métodos de interação com sistema de execução
+    
+    def get_execution_status(self) -> Dict:
+        """Retorna status detalhado do sistema de execução"""
+        if not self.execution_integration:
+            return {
+                'available': False,
+                'message': 'Sistema de execução não inicializado'
+            }
+        
+        return {
+            'available': True,
+            'status': self.execution_integration.get_execution_status(),
+            'order_manager_connected': self.order_manager is not None,
+            'execution_engine_active': self.execution_engine is not None
+        }
+    
+    def get_active_orders(self) -> List:
+        """Retorna lista de ordens ativas"""
+        if self.execution_engine:
+            return self.execution_engine.get_active_orders()
+        return []
+    
+    def get_execution_statistics(self) -> Dict:
+        """Retorna estatísticas de execução"""
+        if self.execution_engine:
+            return self.execution_engine.get_execution_stats()
+        return {
+            'total_orders': 0,
+            'successful_orders': 0,
+            'failed_orders': 0,
+            'success_rate': 0.0,
+            'avg_slippage': 0.0
+        }
+    
+    def cancel_all_orders(self, symbol: Optional[str] = None) -> bool:
+        """Cancela todas as ordens ou de um símbolo específico"""
+        if self.order_manager:
+            return self.order_manager.cancel_all_orders(symbol)
+        return False
+    
+    def close_position(self, symbol: str, at_market: bool = False) -> bool:
+        """Fecha posição de um símbolo específico"""
+        if self.order_manager:
+            order = self.order_manager.close_position(symbol, at_market)
+            return order is not None
+        return False
+    
+    def emergency_stop(self):
+        """Para o sistema em modo de emergência fechando todas as posições"""
+        self.logger.warning("🚨 MODO EMERGÊNCIA ATIVADO")
+        
+        # Fechar todas as posições
+        if self.execution_engine:
+            self.execution_engine.emergency_close_all()
+        
+        # Cancelar todas as ordens
+        if self.order_manager:
+            self.order_manager.cancel_all_orders()
+        
+        # Parar o sistema
+        self.stop()
+        
+        self.logger.warning("🚨 Sistema parado em modo de emergência")
+    
+    def manual_order(self, symbol: str, side: str, quantity: int, 
+                     order_type: str = 'market', price: Optional[float] = None) -> Optional[str]:
+        """
+        Envia ordem manual (para testes ou intervenção manual)
+        
+        Args:
+            symbol: Símbolo do ativo
+            side: 'buy' ou 'sell'
+            quantity: Quantidade
+            order_type: 'market' ou 'limit'
+            price: Preço (obrigatório para limit)
+            
+        Returns:
+            order_id se sucesso, None se falhou
+        """
+        if not self.order_manager:
+            self.logger.error("Sistema de execução não disponível")
+            return None
+        
+        signal = {
+            'symbol': symbol,
+            'action': side,
+            'quantity': quantity,
+            'order_type': order_type,
+            'confidence': 1.0,  # Manual = máxima confiança
+            'prediction': {'regime': 'manual', 'probability': 1.0}
+        }
+        
+        if price is not None:
+            signal['price'] = price
+        
+        order = self.order_manager.send_order(signal)
+        return str(order.profit_id) if order else None

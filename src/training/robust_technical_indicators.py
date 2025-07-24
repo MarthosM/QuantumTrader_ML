@@ -91,9 +91,12 @@ class RobustTechnicalIndicators:
         
         delta = series.diff()
         
+        # Ensure delta is numeric and handle type issues
+        delta = pd.to_numeric(delta, errors='coerce')
+        
         # Separar ganhos e perdas
-        gains = delta.where(delta > 0, 0)
-        losses = -delta.where(delta < 0, 0)
+        gains = delta.where(delta > 0, 0.0)
+        losses = -delta.where(delta < 0, 0.0)
         
         # Método Wilder para suavização (similar ao TA-Lib)
         alpha = 1.0 / period
@@ -167,8 +170,8 @@ class RobustTechnicalIndicators:
         
         # True Range calculation
         high_low = data['high'] - data['low']
-        high_close_prev = np.abs(data['high'] - data['close'].shift(1))
-        low_close_prev = np.abs(data['low'] - data['close'].shift(1))
+        high_close_prev = (data['high'] - data['close'].shift(1)).abs()
+        low_close_prev = (data['low'] - data['close'].shift(1)).abs()
         
         true_range = pd.concat([high_low, high_close_prev, low_close_prev], axis=1).max(axis=1)
         
@@ -196,8 +199,8 @@ class RobustTechnicalIndicators:
         tr = self.calculate_atr(data, [period])[f'atr_{period}']
         
         # Directional Movement
-        high_diff = data['high'].diff()
-        low_diff = data['low'].diff()
+        high_diff = pd.to_numeric(data['high'].diff(), errors='coerce')
+        low_diff = pd.to_numeric(data['low'].diff(), errors='coerce')
         
         plus_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0)
         minus_dm = np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0)
@@ -220,15 +223,21 @@ class RobustTechnicalIndicators:
         plus_di = 100 * (plus_dm_smooth / tr_smooth)
         minus_di = 100 * (minus_dm_smooth / tr_smooth)
         
-        # DX
-        dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+        # DX - manter como pandas Series
+        dx_numerator = (plus_di - minus_di).abs()
+        dx_denominator = plus_di + minus_di
         
-        # ADX (smoothed DX)
-        adx = dx.rolling(window=period).mean()
+        # Evitar divisão por zero
+        dx_denominator = dx_denominator.replace(0, np.nan)
+        dx = 100 * (dx_numerator / dx_denominator)
         
-        # Aplicar suavização final
+        # ADX (smoothed DX) - inicializar como Series
+        adx = dx.rolling(window=period, min_periods=1).mean()
+        
+        # Aplicar suavização final Wilder para ADX
         for i in range(period * 2, len(data)):
-            adx.iloc[i] = alpha * dx.iloc[i] + (1 - alpha) * adx.iloc[i-1]
+            if not pd.isna(dx.iloc[i]) and not pd.isna(adx.iloc[i-1]):
+                adx.iloc[i] = alpha * dx.iloc[i] + (1 - alpha) * adx.iloc[i-1]
         
         return adx
     
@@ -265,18 +274,18 @@ class RobustTechnicalIndicators:
         
         # Parkinson Volatility (usa High-Low)
         for period in [10, 20]:
-            ln_hl = np.log(data['high'] / data['low'])
+            ln_hl = (data['high'] / data['low']).apply(np.log)  # Manter como Series
             parkinson = np.sqrt((1/(4*np.log(2))) * (ln_hl**2).rolling(window=period).mean()) * np.sqrt(252)
             vol_features[f'parkinson_vol_{period}'] = parkinson
         
         # Garman-Klass Volatility
         for period in [10, 20]:
-            ln_ho = np.log(data['high'] / data['open'])
-            ln_lo = np.log(data['low'] / data['open'])
-            ln_co = np.log(data['close'] / data['open'])
+            ln_ho = (data['high'] / data['open']).apply(np.log)  # Manter como Series
+            ln_lo = (data['low'] / data['open']).apply(np.log)   # Manter como Series
+            ln_co = (data['close'] / data['open']).apply(np.log) # Manter como Series
             
             gk = ln_ho * (ln_ho - ln_co) + ln_lo * (ln_lo - ln_co)
-            vol_features[f'gk_vol_{period}'] = np.sqrt(gk.rolling(window=period).mean()) * np.sqrt(252)
+            vol_features[f'gk_vol_{period}'] = (gk.rolling(window=period).mean().apply(np.sqrt)) * np.sqrt(252)
         
         # High-Low range features
         for period in [5, 10, 20]:

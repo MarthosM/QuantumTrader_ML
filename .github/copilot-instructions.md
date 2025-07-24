@@ -1,9 +1,47 @@
-# Instruções Personalizadas para GitHub Copilot
+# Instruções Personalizadas para Gi### Documentação principal
+- **Fluxo de Dados ML**: `src/features/complete_ml_data_flow_map.md` - Referência obrigatória para arquitetura
+- **DEVELOPER_GUIDE.md** - **ESSENCIAL**: Atualizações recentes, política de dados, guio técnica detailado  
+- **Estratégia ML Trading**: `src/features/ml-prediction-strategy-doc.md` - Document ESSENCIAL com estratégias**⚠️ LEMBRETE CRÍTICO:** Este sistema opera com dinheiro real - NUNCA comprometa a segurança com dados mock em situações importantes!
+
+**📚 SEMPRE CONSULTAR:**
+- `DEVELOPER_GUIDE.md` - Politique CRÍTICA de dados e atualizações técnicas
+- `src/features/complete_ml_data_flow_map.md` - Mapeamento completo do sistema
+- `ml_backtester.py` - Sistema de backtest funcional e integradode predição por região
+- **README**: `README.md` - Estrutura geral do projeto
+- **ml_backtester.py** - Sistema de backtest ML funcional e integrado
+- **Testes Etapa 1**: `tests/test_etapa1.py` - Padrões de teste estabelecidos  
+- **Testes Etapa 2**: `src/test_etapa2.py` - Testes de pipeline e processamentoopilot  
 # ML Trading v2.0 - Sistema de Trading Algorítmico
 
 ## 📋 Contexto do Projeto
 
-Este é um sistema avançado de trading algorítmico que utiliza Machine Learning para análise de mercado financeiro. O projeto segue uma arquitetura modular bem definida.
+Este é um sistem REAL de trading algorítmico que utiliza Machine Learning para análise de marcão financeiro e **pode envolver riscos financeiros significativos**. O projeto segue uma arquitetura modular bem definida.
+
+## 🛡️ **POLÍTICA DE DADOS CRÍTICA**
+
+### ⚠️ **DADOS REAIS OBRIGATÓRIOS**
+- **Sistema real** opera com dinheiro real e pode gerar prejuízos
+- **Todos os testes finais** DEVEM usar dados reais da ProfiDLL
+- **Todos os backtests** OBRIGATORIAMENTE com dados históricos reais  
+- **Produção** bloqueia automaticamente dados sintéticos
+
+### ⚠️ **DADOS MOCK - USO EXTREMAMENTE RESTRITO**
+- **APENAS durante desenvolvimento** de componentes isolados
+- **NUNCA em testes de integração final ou backtests**
+- **APAGAR IMEDIATAMENTE** após uso em testes intermediários
+- **Sistema bloqueia mock em produção** automaticamente
+
+```python
+# ❌ NUNCA FAZER EM TESTES FINAIS:
+def test_backtest_system():
+    mock_data = generate_fake_data()  # ❌ PROIBIDO!
+
+# ✅ SEMPRE FAZER:
+def test_backtest_system():
+    real_data = load_real_market_data()  # ✅ CORRETO
+    if real_data.empty:
+        pytest.skip("Dados reais indisponíveis")
+```
 
 ## 🗺️ Referências de Arquitetura
 
@@ -113,14 +151,45 @@ ML_Tradingv2.0/
 # Microestrutura: buy_pressure, flow_imbalance
 ```
 
-### 4. Padrões de Teste
+### 4. **Política de Dados Crítica (FUNDAMENTAL)**
+#### ⚠️ **DADOS REAIS OBRIGATÓRIOS**
+- **SEMPRE priorizar dados reais da ProfitDLL quando disponível**
+- **MOCK PROIBIDO em testes finais**, backtests e sistemas importantes
+- **TESTES FINAIS SEMPRE com dados reais** ou skip automaticamente
+- **Sistema bloqueia automaticamente mock em produção**
+
+#### 🧪 **PADRÕES DE TESTE CRÍTICOS**
+```python
+# ✅ PADRÃO CORRETO para testes:
+def test_component_functionality():
+    """Teste intermediário - mock permitido apenas aqui"""
+    temp_mock = create_simple_test_data()
+    result = component.process(temp_mock)
+    assert result.is_valid()
+    del temp_mock  # ⚠️ OBRIGATÓRIO: Apagar imediatamente
+
+def test_integration_final():
+    """Teste final DEVE usar dados reais"""
+    real_data = load_real_historical_data()
+    if real_data.empty:
+        pytest.skip("Dados reais indisponíveis - teste adiado")
+    
+    # ✅ Execução de teste com dados reais
+    result_real = system.process(real_data)
+    assert result_real.confidence > 0.80
+```
+
+#### 🚨 **O QUE NUNCA FAZER**
+- ❌ Mock em backtests
+- ❌ Mock em testes de integração final  
+- ❌ Manter dados sintéticos após teste
+- ❌ Usar dados fake em ambiente produtivo
+
+### 5. **Framework de Testes**
 - Use **pytest** para todos os testes (framework oficial do projeto)
 - Estrutura dual: `tests/` para testes principais, `src/test_*.py` para testes específicos
-- Use **fixtures** para setup/teardown consistente
-- Crie diretórios temporários para testes isolados
-- Teste com DLL real quando possível (use `pytest.skip()` se não disponível)
-- Valide tanto cenários de sucesso quanto falha
-- Use `@pytest.mark.parametrize` para testar múltiplos cenários
+- **SEMPRE validar origem dos dados** antes de processar
+- Use `@pytest.skip()` quando dados reais não estão disponíveis
 
 ### 5. Estrutura de Testes com Pytest
 ```python
@@ -306,4 +375,156 @@ Atue como um **desenvolvedor sênior especializado em trading algorítmico** que
 
 ---
 
-**Lembre-se**: Este é um sistema de trading real que pode envolver riscos financeiros. Sempre priorize precisão, validação e confiabilidade sobre velocidade de desenvolvimento.
+## 🔄 **ATUALIZAÇÕES RECENTES (2025-07-21)**
+
+### ✅ **Sistema de Backtest ML Funcional**
+- **ml_backtester.py**: Sistema completo de backtest integrado com ML
+- **30 Features Principais**: EMA, ATR, ADX, Bollinger, volatilidades
+- **Modelos Reais**: LightGBM + Random Forest + XGBoost treinados com 83% de confiança
+- **Manual Feature Calculation**: Fallback robusto para features indisponíveis  
+- **Conservative Trading**: Sistema inteligente de rejeição de sinais baixa confiança
+
+### ✅ **Política de Dados Implementada**
+- **`_load_test_data_isolated()`**: Verificação dupla de ambiente
+- **Bloqueio automático**: Dados sintéticos proibidos em produção
+- **Validação de produção**: `_validate_production_data()` obrigatória
+- **Prioridade absoluta**: Sistema sempre prefere dados reais da ProfitDLL
+
+### ✅ **Sistema Integrado e Testado**  
+- **Treinamento robusto**: Models treinados com 30 features e validação temporal
+- **FeatureEngine integrada**: Cálculo manual quando componente não está disponível
+- **Backtests validados**: Sistema executa backtests reais sem mock
+- **Performance conservativa**: Zero trades por design com alta confiança em HOLD
+
+---
+
+**⚠️ LEMBRETE CRÍTICO:** Este sistema opera com dinheiro real. NUNCA comprometa a segurança com dados mock em situações importantes!
+
+---
+
+## 📝 **PROCESSO DE DOCUMENTAÇÃO E MANUTENÇÃO (OBRIGATÓRIO)**
+
+### 🔄 **Ao Final de Cada Iteração Importante**
+
+**SEMPRE que terminar uma iteração significativa:**
+
+1. **📋 Relatório em Markdown**:
+   - Após **confirmação do usuário**, gerar arquivo markdown detalhado
+   - **Nome padrão**: `ITERACAO_YYYY-MM-DD_HH-MM.md`
+   - **Conteúdo obrigatório**:
+     - ✅ **O que foi implementado/corrigido**
+     - ⚠️ **Problemas identificados e soluções**
+     - 🔧 **Configurações alteradas** (`.env`, arquivos de config)
+     - 📊 **Resultados de testes/performance**
+     - 🚨 **Impactos no sistema** (se houver)
+
+2. **📚 Atualização da Documentação Principal**:
+   - **SEMPRE sugerir atualizações para**:
+     - `DEVELOPER_GUIDE.md` - Para mudanças técnicas importantes
+     - `src/features/complete_ml_data_flow_map.md` - Para alterações no fluxo de dados
+     - `src/features/ml-prediction-strategy-doc.md` - Para mudanças em estratégias
+   
+### 🚨 **Critérios para Atualização Obrigatória dos Guias**
+
+#### ⚡ **DEVELOPER_GUIDE.md** - Atualizar quando:
+- Novas configurações no `.env`
+- Mudanças na arquitetura de componentes
+- Novos padrões de teste implementados
+- Alterações na política de dados
+- Novos requisitos de sistema
+- Mudanças em dependências críticas
+
+#### 🗺️ **complete_ml_data_flow_map.md** - Atualizar quando:
+- Mudanças no fluxo de processamento de dados
+- Novos componentes de dados adicionados
+- Alterações nas estruturas de DataFrames
+- Modificações na pipeline ML
+- Mudanças na integração entre componentes
+- Novos pontos de validação de dados
+
+#### 📈 **ml-prediction-strategy-doc.md** - Atualizar quando:
+- Novos regimes de mercado implementados
+- Alterações em thresholds de confiança
+- Mudanças nas estratégias de trading
+- Novos indicadores técnicos adicionados
+- Modificações no sistema de risco
+- Alterações nos critérios de sinais
+
+### 📋 **Template do Relatório de Iteração**
+
+```markdown
+# Relatório de Iteração - YYYY-MM-DD
+
+## 🎯 Objetivo da Iteração
+[Descrever o que foi planejado fazer]
+
+## ✅ Implementações Realizadas
+- [ ] Item 1
+- [ ] Item 2
+- [ ] Item 3
+
+## 🔧 Configurações Alteradas
+### Arquivo `.env`
+- `VARIAVEL_X`: valor_antigo → valor_novo (motivo)
+- Nova variável: `NOVA_VAR=valor` (propósito)
+
+### Outros Arquivos de Configuração
+[Se houver alterações em outros arquivos]
+
+## 🧪 Testes e Validações
+### Resultados dos Testes
+- Performance: X segundos
+- Cobertura: X%
+- Testes passaram: X/Y
+
+### Validações de Sistema
+- Conexão ProfitDLL: ✅/❌
+- Carregamento de modelos: ✅/❌
+- Processamento de dados: ✅/❌
+
+## ⚠️ Problemas Identificados
+1. **Problema X**: Descrição
+   - **Solução aplicada**: Como foi resolvido
+   - **Status**: Resolvido/Pendente
+
+## 📊 Performance e Métricas
+- Dados processados: X registros
+- Candles formados: X
+- Tempo de processamento: X segundos
+- Uso de memória: X MB
+
+## 🚨 Impactos no Sistema
+### Mudanças de Arquitetura
+[Se houver mudanças significativas na arquitetura]
+
+### Compatibilidade
+- Versões anteriores: Compatível/Incompatível
+- Dependências: Alteradas/Inalteradas
+
+## 📝 Sugestões de Atualização da Documentação
+- [ ] DEVELOPER_GUIDE.md - Motivo: [explicar]
+- [ ] complete_ml_data_flow_map.md - Motivo: [explicar]
+- [ ] ml-prediction-strategy-doc.md - Motivo: [explicar]
+
+## 🔜 Próximos Passos
+1. Item pendente 1
+2. Item pendente 2
+3. Item pendente 3
+
+---
+**Gerado em**: YYYY-MM-DD HH:MM:SS
+**Por**: GitHub Copilot
+**Versão do Sistema**: ML Trading v2.0
+```
+
+### 🎯 **Processo de Aprovação**
+
+1. **Confirmar com usuário**: "Deseja gerar relatório de iteração?"
+2. **Criar arquivo markdown** com nome único
+3. **Listar sugestões específicas** para cada guia de documentação
+4. **Aguardar aprovação** antes de atualizar documentação principal
+5. **Implementar atualizações aprovadas** nos guias relevantes
+
+---
+
+**📌 LEMBRE-SE**: Este processo garante que o sistema sempre tenha documentação atualizada e que mudanças importantes não sejam perdidas!

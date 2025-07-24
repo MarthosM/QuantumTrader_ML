@@ -273,6 +273,146 @@ class PerformanceAnalyzer:
         
         return oracle_correct / len(actuals)
     
+    def _calculate_q_statistic(self, predictions: Dict[str, np.ndarray], 
+                              actuals: pd.Series) -> Dict:
+        """Calcula estatística Q para medir diversidade entre pares de modelos"""
+        model_names = list(predictions.keys())
+        n_models = len(model_names)
+        q_matrix = np.zeros((n_models, n_models))
+        
+        for i, model1 in enumerate(model_names):
+            for j, model2 in enumerate(model_names):
+                if i < j:
+                    # Calcular Q-statistic entre dois modelos
+                    pred1 = predictions[model1]
+                    pred2 = predictions[model2]
+                    
+                    # Contar concordâncias e discordâncias
+                    both_correct = ((pred1 == actuals) & (pred2 == actuals)).sum()
+                    both_wrong = ((pred1 != actuals) & (pred2 != actuals)).sum()
+                    m1_correct_m2_wrong = ((pred1 == actuals) & (pred2 != actuals)).sum()
+                    m1_wrong_m2_correct = ((pred1 != actuals) & (pred2 == actuals)).sum()
+                    
+                    # Evitar divisão por zero
+                    denominator = (both_correct * both_wrong) + (m1_correct_m2_wrong * m1_wrong_m2_correct)
+                    if denominator > 0:
+                        q_stat = ((both_correct * both_wrong) - (m1_correct_m2_wrong * m1_wrong_m2_correct)) / denominator
+                    else:
+                        q_stat = 0.0
+                    
+                    q_matrix[i, j] = q_stat
+                    q_matrix[j, i] = q_stat
+        
+        return {
+            'matrix': q_matrix.tolist(),
+            'model_names': model_names,
+            'avg_q_statistic': np.mean(q_matrix[np.triu_indices(n_models, k=1)])
+        }
+    
+    def _calculate_kappa_statistic(self, predictions: Dict[str, np.ndarray], 
+                                  actuals: pd.Series) -> Dict:
+        """Calcula estatística Kappa para medir concordância entre modelos"""
+        from sklearn.metrics import cohen_kappa_score
+        
+        model_names = list(predictions.keys())
+        n_models = len(model_names)
+        kappa_matrix = np.zeros((n_models, n_models))
+        
+        for i, model1 in enumerate(model_names):
+            for j, model2 in enumerate(model_names):
+                if i <= j:
+                    if i == j:
+                        kappa_matrix[i, j] = 1.0
+                    else:
+                        kappa = cohen_kappa_score(predictions[model1], predictions[model2])
+                        kappa_matrix[i, j] = kappa
+                        kappa_matrix[j, i] = kappa
+        
+        return {
+            'matrix': kappa_matrix.tolist(),
+            'model_names': model_names,
+            'avg_kappa': np.mean(kappa_matrix[np.triu_indices(n_models, k=1)])
+        }
+    
+    def _analyze_weighted_voting(self, predictions: Dict[str, np.ndarray], 
+                               actuals: pd.Series) -> Dict:
+        """Analisa performance de votação ponderada baseada na confiança"""
+        from sklearn.metrics import accuracy_score, f1_score
+        
+        # Converter predições para probabilidades se necessário
+        model_probas = {}
+        model_weights = {}
+        
+        for name, preds in predictions.items():
+            if len(preds.shape) > 1:
+                # Já são probabilidades
+                model_probas[name] = preds
+                # Peso baseado na confiança média
+                model_weights[name] = np.mean(np.max(preds, axis=1))
+            else:
+                # Converter classes para probabilidades one-hot
+                n_classes = 3
+                proba = np.zeros((len(preds), n_classes))
+                proba[np.arange(len(preds)), preds.astype(int)] = 1.0
+                model_probas[name] = proba
+                model_weights[name] = 1.0  # Peso igual para predições de classe
+        
+        # Normalizar pesos
+        total_weight = sum(model_weights.values())
+        if total_weight > 0:
+            model_weights = {name: weight/total_weight for name, weight in model_weights.items()}
+        
+        # Votação ponderada
+        weighted_proba = np.zeros_like(list(model_probas.values())[0])
+        for name, proba in model_probas.items():
+            weighted_proba += proba * model_weights[name]
+        
+        # Converter para classes
+        weighted_pred = np.argmax(weighted_proba, axis=1)
+        
+        return {
+            'accuracy': accuracy_score(actuals, weighted_pred),
+            'f1_score': f1_score(actuals, weighted_pred, average='weighted'),
+            'weights': model_weights,
+            'avg_confidence': np.mean(np.max(weighted_proba, axis=1))
+        }
+    
+    def _analyze_by_hour_of_day(self, df: pd.DataFrame) -> Dict:
+        """Analisa performance por hora do dia"""
+        df['hour'] = df['timestamp'].dt.hour
+        
+        hourly_stats = df.groupby('hour').agg({
+            'correct': ['mean', 'count']
+        }).round(4)
+        
+        return {
+            'accuracy_by_hour': hourly_stats['correct']['mean'].to_dict(),
+            'trades_by_hour': hourly_stats['correct']['count'].to_dict()
+        }
+    
+    def _analyze_by_day_of_week(self, df: pd.DataFrame) -> Dict:
+        """Analisa performance por dia da semana"""
+        df['weekday'] = df['timestamp'].dt.dayofweek
+        weekday_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        
+        daily_stats = df.groupby('weekday').agg({
+            'correct': ['mean', 'count']
+        }).round(4)
+        
+        # Converter índices numéricos para nomes dos dias
+        accuracy_by_day = {}
+        trades_by_day = {}
+        
+        for idx, day_name in enumerate(weekday_names):
+            if idx in daily_stats.index:
+                accuracy_by_day[day_name] = daily_stats.loc[idx, ('correct', 'mean')]
+                trades_by_day[day_name] = daily_stats.loc[idx, ('correct', 'count')]
+        
+        return {
+            'accuracy_by_weekday': accuracy_by_day,
+            'trades_by_weekday': trades_by_day
+        }
+    
     def _analyze_by_period(self, df: pd.DataFrame, period: str) -> Dict:
         """Analisa performance por período temporal"""
         df['period'] = df['timestamp'].dt.to_period(period)
@@ -295,7 +435,7 @@ class PerformanceAnalyzer:
         if len(df) > 100:
             # Regressão linear simples
             x = np.arange(len(df))
-            y = df['rolling_accuracy'].fillna(method='bfill').fillna(method='ffill')
+            y = df['rolling_accuracy'].bfill().ffill()  # Usar métodos modernos do pandas
             
             slope, intercept = np.polyfit(x, y, 1)
             

@@ -15,8 +15,25 @@ import lightgbm as lgb
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.neural_network import MLPClassifier
-import tensorflow as tf
-from tensorflow.keras import layers, models, callbacks
+
+# TensorFlow imports with proper error handling
+try:
+    import tensorflow as tf
+    # Para TensorFlow 2.19+ com Keras 3.x, usar keras diretamente
+    import keras
+    from keras import layers, models, callbacks, optimizers
+    Adam = optimizers.Adam
+    TENSORFLOW_AVAILABLE = True
+except (ImportError, AttributeError):
+    # TensorFlow/Keras not installed or incompatible
+    TENSORFLOW_AVAILABLE = False
+    tf = None
+    keras = None
+    layers = None
+    models = None
+    callbacks = None
+    optimizers = None
+    Adam = None
 
 class ModelTrainer:
     """Treinador individual de modelos ML para trading"""
@@ -37,7 +54,7 @@ class ModelTrainer:
                    y_train: pd.Series,
                    X_val: pd.DataFrame,
                    y_val: pd.Series,
-                   hyperparams: Dict = None) -> Tuple[Any, Dict]:
+                   hyperparams: Optional[Dict] = None) -> Tuple[Any, Dict]:
         """
         Treina um modelo específico
         
@@ -250,8 +267,67 @@ class ModelTrainer:
         
         return model, metrics
     
+    def _train_svm(self, X_train, y_train, X_val, y_val, config):
+        """Treina Support Vector Machine"""
+        model = SVC(**config)
+        model.fit(X_train, y_train)
+        
+        metrics = self._calculate_metrics(model, X_train, y_train, X_val, y_val)
+        
+        return model, metrics
+    
+    def _train_neural_network(self, X_train, y_train, X_val, y_val, config):
+        """Treina rede neural MLP (Multilayer Perceptron)"""
+        from sklearn.preprocessing import StandardScaler
+        
+        # Padronizar dados para rede neural
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_val_scaled = scaler.transform(X_val)
+        
+        # Configurar MLP
+        mlp_config = {
+            'hidden_layer_sizes': tuple(config['hidden_layers']),
+            'activation': config['activation'],
+            'learning_rate_init': config['learning_rate'],
+            'batch_size': config['batch_size'],
+            'max_iter': config['epochs'],
+            'early_stopping': True,
+            'validation_fraction': 0.1,
+            'n_iter_no_change': 10,
+            'random_state': 42
+        }
+        
+        model = MLPClassifier(**mlp_config)
+        model.fit(X_train_scaled, y_train)
+        
+        # Para usar o modelo, precisamos salvar o scaler também
+        # Criar um wrapper que inclui o scaler
+        class MLPWrapper:
+            def __init__(self, model, scaler):
+                self.model = model
+                self.scaler = scaler
+            
+            def predict(self, X):
+                X_scaled = self.scaler.transform(X)
+                return self.model.predict(X_scaled)
+            
+            def predict_proba(self, X):
+                X_scaled = self.scaler.transform(X)
+                return self.model.predict_proba(X_scaled)
+        
+        wrapped_model = MLPWrapper(model, scaler)
+        
+        # Calcular métricas usando dados escalados
+        metrics = self._calculate_metrics(wrapped_model, X_train, y_train, X_val, y_val)
+        
+        return wrapped_model, metrics
+    
     def _train_lstm(self, X_train, y_train, X_val, y_val, config):
         """Treina modelo LSTM para séries temporais"""
+        if not TENSORFLOW_AVAILABLE:
+            raise ImportError("TensorFlow não está disponível para modelos LSTM")
+        
         # Preparar dados para LSTM (adicionar dimensão temporal)
         sequence_length = config['sequence_length']
         X_train_seq, y_train_seq = self._prepare_sequences(X_train, y_train, sequence_length)
@@ -283,8 +359,7 @@ class ModelTrainer:
             validation_data=(X_val_seq, y_val_seq),
             epochs=config['epochs'],
             batch_size=config['batch_size'],
-            callbacks=[early_stop, reduce_lr],
-            verbose=0
+            callbacks=[early_stop, reduce_lr]
         )
         
         # Calcular métricas
@@ -297,6 +372,9 @@ class ModelTrainer:
     
     def _build_lstm_model(self, input_shape, config):
         """Constrói arquitetura LSTM"""
+        if not TENSORFLOW_AVAILABLE:
+            raise ImportError("TensorFlow não está disponível para modelos LSTM")
+        
         model = models.Sequential()
         
         # LSTM layers
@@ -310,20 +388,19 @@ class ModelTrainer:
                 recurrent_dropout=config['recurrent_dropout'],
                 input_shape=input_shape if i == 0 else None
             ))
-            
-            if return_sequences:
-                model.add(layers.BatchNormalization())
         
         # Dense layers
-        model.add(layers.Dense(32, activation='relu'))
-        model.add(layers.Dropout(config['dropout']))
         model.add(layers.Dense(16, activation='relu'))
         model.add(layers.Dense(3, activation='softmax'))
         
         # Compilar
-        optimizer = tf.keras.optimizers.Adam(learning_rate=config['learning_rate'])
+        if Adam is not None:
+            optimizer = Adam(learning_rate=config['learning_rate'])
+        else:
+            optimizer = 'adam'  # Fallback para string
+        
         model.compile(
-            optimizer=optimizer,
+            optimizer=optimizer,  # type: ignore
             loss='sparse_categorical_crossentropy',
             metrics=['accuracy']
         )
@@ -332,6 +409,9 @@ class ModelTrainer:
     
     def _train_transformer(self, X_train, y_train, X_val, y_val, config):
         """Treina modelo Transformer com atenção"""
+        if not TENSORFLOW_AVAILABLE:
+            raise ImportError("TensorFlow não está disponível para modelos Transformer")
+        
         # Preparar dados
         sequence_length = config['sequence_length']
         X_train_seq, y_train_seq = self._prepare_sequences(X_train, y_train, sequence_length)
@@ -356,8 +436,7 @@ class ModelTrainer:
             validation_data=(X_val_seq, y_val_seq),
             epochs=config['epochs'],
             batch_size=config['batch_size'],
-            callbacks=[early_stop],
-            verbose=0
+            callbacks=[early_stop]
         )
         
         # Métricas
@@ -370,6 +449,9 @@ class ModelTrainer:
     
     def _build_transformer_model(self, input_shape, config):
         """Constrói arquitetura Transformer"""
+        if not TENSORFLOW_AVAILABLE:
+            raise ImportError("TensorFlow não está disponível para modelos Transformer")
+        
         inputs = layers.Input(shape=input_shape)
         
         # Positional encoding
@@ -415,9 +497,13 @@ class ModelTrainer:
         model = models.Model(inputs=inputs, outputs=outputs)
         
         # Compilar
-        optimizer = tf.keras.optimizers.Adam(learning_rate=config['learning_rate'])
+        if Adam is not None:
+            optimizer = Adam(learning_rate=config['learning_rate'])
+        else:
+            optimizer = 'adam'  # Fallback para string
+        
         model.compile(
-            optimizer=optimizer,
+            optimizer=optimizer,  # type: ignore
             loss='sparse_categorical_crossentropy',
             metrics=['accuracy']
         )

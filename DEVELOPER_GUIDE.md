@@ -1,5 +1,8 @@
 # 🔧 ML Trading v2.0 - Guia Técnico do Desenvolvedor
 
+> **Recurso Técnico Detalhado - Atualizado 2025-07-21**  
+> Sistema integrado com backtest ML funcional e política de dados limpos ML Trading v2.0 - Guia Técnico do Desenvolvedor
+
 > **Documento Técnico Detalhado - Atualizado 2025-07-20**  
 > Sistema unificado com RobustNaNHandler integrado e treinamento otimizado
 
@@ -9,7 +12,43 @@
 ```python
 def main():
     # 1. Carrega configurações do .env
-    config = load_config()
+    config = load_confi---
+
+## 📊 MELHORIAS ### ✅ **Sistema Unificado de Treinamento**
+- **TrainingOrchestrator**: Pipeline completo end-to-end
+- **Walk-Forward Validation**: validação temporal robusta
+- **Ensemble Automático**: 3 modelos otimizados automaticamente
+- **Relatórios Automáticos**: Métrica e análises detalhados
+
+### ✅ **Backtest ML Funcional**
+- **ml_backtester.py**: Sistema completo de backtest com ML integrado
+- **Manual Feature Calculation**: Fallback robusto para features indisponíveis
+- **30 Features Principais**: EMA 9/20/50, ATR, ADX, Bollinger, volatilidades
+- **Modelos Reais**: LightGBM + Random Forest + XGBoost treinados
+- **Conservative Trading**: Sistema inteligente de rejeição de sinais
+
+### ✅ **Política de Dados Limpa**
+- **Prioridade Dados Reais**: Sistema sempre prefere dados da ProfitDLL
+- **Mock Controlado**: Dados sintéticos apenas para testes intermediários específicos  
+- **Validação de Produção**: Bloqueio automático de dados sintéticos em produção
+- **Isolamento Seguro**: `_load_test_data_isolated()` com verificação duplaMENTADAS (2025-07-21)
+
+### ✅ **Sistema de Backtest ML Integrado**
+- **ml_backtester.py**: Motor completo de backtest com ML integrado
+- **Cálculo Manual de Features**: Sistema de fallback para features não disponíveis
+- **30 Features Principais**: ema_9, ema_20, ema_50, atr, adx, bb_bands, volatilities, etc.
+- **Modelos Reais**: LightGBM, Random Forest, XGBoost com 83% de confiança
+- **Sistema Conservativo**: Alta confiança em sinais HOLD quando apropriado
+
+### ✅ **Política de Dados Limpa**
+- **Dados Reais Prioritários**: Sistema sempre prefere dados reais da ProfitDLL
+- **Mock Apenas para Testes Intermediários**: Dados sintéticos apenas durante desenvolvimento
+- **Validação de Produção**: Sistema bloqueia dados mock em ambiente produtivo
+- **Isolamento de Testes**: `_load_test_data_isolated()` com verificação dupla de ambiente
+
+---
+
+## 📊 MELHORIAS IMPLEMENTADAS (2025-07-20)
     
     # 2. Cria e inicializa sistema de trading
     trading_system = TradingSystem(config)
@@ -407,6 +446,89 @@ def _apply_new_strategy(self, prediction_result, features_df):
     decision = self._calculate_new_strategy_decision(prediction_result)
     
     return decision
+```
+
+---
+
+## 🛡️ POLÍTICA DE DADOS E TESTES (CRÍTICO)
+
+### 🎯 Filosofia de Dados
+Este sistema é destinado a **trading real com dinheiro real**. Por isso:
+
+#### ✅ **DADOS REAIS (PRIORITÁRIOS)**
+```python
+# SEMPRE preferir dados reais da ProfitDLL
+if self.connection and self.connection.connected:
+    # Usar dados reais do mercado
+    result = self.connection.request_historical_data(ticker, start_date, end_date)
+```
+
+#### ⚠️ **DADOS MOCK (USO RESTRITO)**
+- **APENAS para testes intermediários** durante desenvolvimento de componentes
+- **NUNCA em testes finais** de integração ou backtests
+- **AUTOMATICAMENTE BLOQUEADOS** em ambiente de produção
+- **DEVEM SER APAGADOS** após verificação de funcionalidade
+
+```python
+# Verificação de segurança obrigatória
+def _load_test_data_isolated(self, ticker: str, days_back: int) -> bool:
+    """Carrega dados de teste APENAS em desenvolvimento - ISOLADO"""
+    # ⛔ VERIFICAÇÃO DUPLA: Não rodar em produção
+    if os.getenv('TRADING_ENV') == 'production':
+        raise RuntimeError("❌ DADOS SINTÉTICOS CHAMADOS EM PRODUÇÃO!")
+    
+    # Mock apenas para testes de desenvolvimento específicos
+    self.logger.warning("⚠️ MODO DESENVOLVIMENTO - Dados podem ser sintéticos")
+```
+
+#### 🏭 **AMBIENTE DE PRODUÇÃO**
+```python
+# Validação obrigatória de produção
+def _validate_production_data(self, data, source: str):
+    """OBRIGATÓRIO: Validar dados em produção"""
+    if os.getenv('TRADING_ENV') == 'production':
+        # Bloquear qualquer dados suspeito
+        if source.startswith('mock') or source.startswith('test'):
+            raise ProductionDataError("🚨 DADOS MOCK DETECTADOS EM PRODUÇÃO!")
+```
+
+### 📋 **DIRETRIZES DE TESTE**
+
+#### ✅ **TESTES INTERMEDIÁRIOS** (Mock Permitido)
+```python
+def test_component_functionality():
+    """Teste de funcionalidade de componente individual"""
+    # Mock permitido APENAS para testar lógica interna
+    mock_data = create_simple_mock_candles()
+    result = component.process(mock_data)
+    
+    # ⚠️ IMPORTANTE: Apagar mock após teste
+    del mock_data
+```
+
+#### ✅ **TESTES FINAIS** (Apenas Dados Reais)
+```python
+def test_integration_complete():
+    """Teste final DEVE usar dados reais"""
+    # Tentar obter dados reais primeiro
+    real_data = load_real_historical_data()
+    if real_data.empty:
+        pytest.skip("Dados reais não disponíveis - teste final adiado")
+    
+    # ✅ Testar com dados reais
+    result = system.full_integration_test(real_data)
+```
+
+#### ✅ **BACKTESTS** (Apenas Dados Reais)
+```python
+def run_backtest():
+    """Backtests OBRIGATORIAMENTE com dados reais"""
+    # ⛔ NUNCA usar mock em backtests
+    if 'mock' in str(data_source).lower():
+        raise ValueError("❌ BACKTEST COM DADOS MOCK PROIBIDO!")
+    
+    # ✅ Apenas dados históricos reais
+    result = ml_backtester.run(real_historical_data)
 ```
 
 ---

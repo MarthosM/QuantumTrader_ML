@@ -45,10 +45,10 @@ class ValidationEngine:
             raise ValueError(f"Método desconhecido: {method}")
     
     def _walk_forward_validation(self, data: pd.DataFrame,
-                               initial_train_size: int = None,
-                               test_size: int = None,
-                               step_size: int = None,
-                               min_train_size: int = None,
+                               initial_train_size: Optional[int] = None,
+                               test_size: Optional[int] = None,
+                               step_size: Optional[int] = None,
+                               min_train_size: Optional[int] = None,
                                expanding: bool = False) -> Generator:
         """
         Walk-forward validation adaptativo para diferentes tamanhos de dados
@@ -141,9 +141,9 @@ class ValidationEngine:
         self.logger.info(f"Walk-forward validation: {fold} folds criados")
     
     def _expanding_window_validation(self, data: pd.DataFrame,
-                                   initial_train_size: int = 5000,
-                                   test_size: int = 500,
-                                   step_size: int = 250) -> Generator:
+                                   initial_train_size: Optional[int] = 5000,
+                                   test_size: Optional[int] = 500,
+                                   step_size: Optional[int] = 250) -> Generator:
         """
         Expanding window validation
         
@@ -158,9 +158,9 @@ class ValidationEngine:
         )
     
     def _rolling_window_validation(self, data: pd.DataFrame,
-                                 window_size: int = 5000,
-                                 test_size: int = 500,
-                                 step_size: int = 250) -> Generator:
+                                 window_size: Optional[int] = 5000,
+                                 test_size: Optional[int] = 500,
+                                 step_size: Optional[int] = 250) -> Generator:
         """
         Rolling window validation
         
@@ -333,7 +333,7 @@ class ValidationEngine:
     
     def calculate_validation_metrics(self, y_true: pd.Series,
                                    y_pred: np.ndarray,
-                                   y_proba: np.ndarray = None) -> Dict:
+                                   y_proba: Optional[np.ndarray] = None) -> Dict:
         """
         Calcula métricas específicas para validação de trading
         """
@@ -354,9 +354,15 @@ class ValidationEngine:
             precisions = precision_score(y_true, y_pred, average=None, zero_division=0)
             recalls = recall_score(y_true, y_pred, average=None, zero_division=0)
             
-            for i in range(min(3, len(precisions))):  # 0: Sell, 1: Hold, 2: Buy
-                metrics[f'class_{i}_precision'] = precisions[i]
-                metrics[f'class_{i}_recall'] = recalls[i]
+            # Verificar se é array ou scalar
+            if isinstance(precisions, np.ndarray) and isinstance(recalls, np.ndarray):
+                for i in range(min(3, len(precisions))):  # 0: Sell, 1: Hold, 2: Buy
+                    metrics[f'class_{i}_precision'] = precisions[i]
+                    metrics[f'class_{i}_recall'] = recalls[i]
+            else:
+                # Caso binário - apenas uma classe
+                metrics[f'class_0_precision'] = float(precisions) if not isinstance(precisions, np.ndarray) else precisions[0]
+                metrics[f'class_0_recall'] = float(recalls) if not isinstance(recalls, np.ndarray) else recalls[0]
                 
         except Exception as e:
             self.logger.warning(f"Erro ao calcular métricas por classe: {e}")

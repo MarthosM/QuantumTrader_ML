@@ -59,6 +59,7 @@ class ConnectionManager:
         # Callbacks registrados
         self.trade_callbacks = []
         self.state_callbacks = []
+        self.order_callbacks = []
         
         # Contadores para debug
         self._historical_data_count = 0
@@ -400,7 +401,37 @@ class ConnectionManager:
                                 side, price, stop_price, avg_price, profit_id,
                                 tipo_ordem, conta, titular, cl_ord_id, status,
                                 date, text_message):
-            pass
+            try:
+                # Criar dicionário com dados da ordem
+                order_data = {
+                    'asset_id': asset_id,
+                    'corretora': corretora,
+                    'quantity': qtd,
+                    'traded_quantity': traded_qtd,
+                    'leaves_quantity': leaves_qtd,
+                    'side': side,
+                    'price': price,
+                    'stop_price': stop_price,
+                    'avg_price': avg_price,
+                    'profit_id': profit_id,
+                    'order_type': tipo_ordem,
+                    'account': conta,
+                    'titular': titular,
+                    'client_order_id': cl_ord_id,
+                    'status': status,
+                    'date': date,
+                    'text_message': text_message
+                }
+                
+                # Notificar todos os callbacks registrados
+                for callback in self.order_callbacks:
+                    try:
+                        callback(order_data)
+                    except Exception as e:
+                        self.logger.error(f"Erro executando callback de ordem: {e}")
+                        
+            except Exception as e:
+                self.logger.error(f"Erro no order_change_callback: {e}")
 
         # THistoryCallback tem 16 parâmetros  
         @WINFUNCTYPE(None, TAssetID, c_int, c_int, c_int, c_int, c_int, c_double,
@@ -481,6 +512,16 @@ class ConnectionManager:
     def register_state_callback(self, callback: Callable):
         """Registra callback para mudanças de estado"""
         self.state_callbacks.append(callback)
+        
+    def register_order_callback(self, callback: Callable):
+        """Registra callback para atualizações de ordens"""
+        self.order_callbacks.append(callback)
+        
+    def register_account_callback(self, callback: Callable):
+        """Registra callback para informações da conta"""
+        # Implementação temporária - pode ser expandida se necessário
+        self.logger.debug("Callback de conta registrado")
+        pass
     
     def subscribe_ticker(self, ticker: str, exchange: str = "F") -> bool:
         """Subscreve para receber dados de um ticker"""

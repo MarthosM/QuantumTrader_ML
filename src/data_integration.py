@@ -34,6 +34,7 @@ class DataIntegration:
         
         # Controle para print do DataFrame
         self._last_dataframe_print = None
+        self._last_empty_dataframe_print = None  # Controle específico para DataFrame vazio
         self._candle_count = 0
         
         # Registrar callback para trades (só se connection_manager não for None)
@@ -168,22 +169,33 @@ class DataIntegration:
                 self._last_dataframe_print = datetime.now()
                 
             else:
-                print("\n" + "="*80)
-                print("⚠️ DATAFRAME DE CANDLES VAZIO")
-                print("="*80)
-                print(f"🕐 Timestamp: {datetime.now().strftime('%H:%M:%S')}")
-                print(f"📊 Total de candles: 0")
-                print(f"🔍 Verificado em:")
-                print(f"   - data_loader.candles_df: {'Existe' if hasattr(self.data_loader, 'candles_df') else 'Não existe'}")
-                print(f"   - data_loader.candles_buffer: {'Existe' if hasattr(self.data_loader, 'candles_buffer') else 'Não existe'}")
-                print(f"   - data_integration.candles_1min: {'Existe' if hasattr(self, 'candles_1min') else 'Não existe'}")
+                # Evitar spam de prints quando DataFrame está vazio
+                from datetime import datetime, timedelta
+                now = datetime.now()
                 
-                # Tentar mostrar informações do data_loader
-                if hasattr(self.data_loader, '__dict__'):
-                    print(f"🔧 Atributos do DataLoader: {list(self.data_loader.__dict__.keys())}")
-                
-                print("💡 Aguardando dados históricos ou tempo real...")
-                print("="*80)
+                # Só printar se passou mais de 30 segundos desde o último print de dataframe vazio
+                if (self._last_empty_dataframe_print is None or 
+                    (now - self._last_empty_dataframe_print) > timedelta(seconds=30)):
+                    
+                    print("\n" + "="*80)
+                    print("⚠️ DATAFRAME DE CANDLES VAZIO")
+                    print("="*80)
+                    print(f"🕐 Timestamp: {datetime.now().strftime('%H:%M:%S')}")
+                    print(f"📊 Total de candles: 0")
+                    print(f"🔍 Verificado em:")
+                    print(f"   - data_loader.candles_df: {'Existe' if hasattr(self.data_loader, 'candles_df') else 'Não existe'}")
+                    print(f"   - data_loader.candles_buffer: {'Existe' if hasattr(self.data_loader, 'candles_buffer') else 'Não existe'}")
+                    print(f"   - data_integration.candles_1min: {'Existe' if hasattr(self, 'candles_1min') else 'Não existe'}")
+                    
+                    # Tentar mostrar informações do data_loader
+                    if hasattr(self.data_loader, '__dict__'):
+                        print(f"🔧 Atributos do DataLoader: {list(self.data_loader.__dict__.keys())}")
+                    
+                    print("💡 Aguardando dados históricos ou tempo real...")
+                    print("="*80)
+                    
+                    # Atualizar timestamp do último print de dataframe vazio
+                    self._last_empty_dataframe_print = now
                 
         except Exception as e:
             self.logger.error(f"Erro imprimindo DataFrame: {e}")

@@ -18,7 +18,7 @@ class EnsembleTrainer:
         
     def train_ensemble(self, X_train: pd.DataFrame, y_train: pd.Series,
                       X_val: pd.DataFrame, y_val: pd.Series,
-                      model_types: List[str] = None,
+                      model_types: Optional[List[str]] = None,
                       parallel: bool = True) -> Dict:
         """
         Treina ensemble completo de modelos
@@ -428,11 +428,11 @@ class EnsembleTrainer:
     
     def save_ensemble(self, ensemble_data: Dict, save_path: str = 'src/training/models/ensemble'):
         """Salva ensemble completo"""
-        save_path = Path(save_path)
-        save_path.mkdir(parents=True, exist_ok=True)
+        save_path_obj = Path(save_path)
+        save_path_obj.mkdir(parents=True, exist_ok=True)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        ensemble_dir = save_path / f"ensemble_{timestamp}"
+        ensemble_dir = save_path_obj / f"ensemble_{timestamp}"
         ensemble_dir.mkdir(exist_ok=True)
         
         # Salvar cada modelo

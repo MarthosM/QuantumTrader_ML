@@ -6,7 +6,7 @@ Sistema integrado com indicadores robustos e tratamento inteligente de NaN
 import pandas as pd
 import numpy as np
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import logging
 from concurrent.futures import ProcessPoolExecutor
 import warnings
@@ -123,7 +123,7 @@ class RobustFeaturePipeline:
                 self.logger.info(f"✅ NaN tratados: {nan_stats['initial_rows']} → {nan_stats['final_rows']} linhas")
                 
                 if nan_stats['removed_features']:
-                    self.logger.warning(f"⚠️ Features removidas por excesso de NaN: {len(nan_stats['removed_features'])}")
+                    self.logger.warning(f"⚠️ Features removidas por excesso de NaN: {nan_stats['removed_features']}")
             
             else:
                 self.logger.info("✅ Nenhum NaN detectado")
@@ -241,7 +241,7 @@ class RobustFeaturePipeline:
         
         return features_final, target_final
     
-    def validate_features(self, features: pd.DataFrame) -> Dict[str, any]:
+    def validate_features(self, features: pd.DataFrame) -> Dict[str, Any]:
         """
         Valida qualidade das features geradas
         """
@@ -274,24 +274,74 @@ class RobustFeaturePipeline:
         low_var_threshold = 0.01
         
         for col in numeric_features.columns:
-            if numeric_features[col].var() < low_var_threshold:
+            try:
+                col_var = numeric_features[col].var(skipna=True)
+                # Conversão segura para verificação usando numpy
+                try:
+                    var_value = np.asarray(col_var).item() if col_var is not None else None
+                    if var_value is None or pd.isna(var_value) or not np.isfinite(var_value):
+                        validation_report['low_variance_features'].append(col)
+                    elif var_value < low_var_threshold:
+                        validation_report['low_variance_features'].append(col)
+                except (TypeError, ValueError, OverflowError):
+                    validation_report['low_variance_features'].append(col)
+            except (TypeError, ValueError, ZeroDivisionError):
+                # Se não conseguir calcular variância, considerar como problema
                 validation_report['low_variance_features'].append(col)
         
-        # Verificar alta correlação
+        # Verificar alta correlação de forma mais robusta
         if len(numeric_features.columns) > 1:
-            corr_matrix = numeric_features.corr().abs()
-            high_corr_pairs = []
-            
-            for i in range(len(corr_matrix.columns)):
-                for j in range(i+1, len(corr_matrix.columns)):
-                    if corr_matrix.iloc[i, j] > 0.95:
-                        high_corr_pairs.append((
-                            corr_matrix.columns[i], 
-                            corr_matrix.columns[j], 
-                            corr_matrix.iloc[i, j]
-                        ))
-            
-            validation_report['correlation_issues'] = high_corr_pairs
+            try:
+                # Remover colunas com variância zero ou constantes para correlação
+                valid_cols = []
+                for col in numeric_features.columns:
+                    try:
+                        col_var = numeric_features[col].var(skipna=True)
+                        var_value = np.asarray(col_var).item() if col_var is not None else 0.0
+                        if var_value > 1e-10 and numeric_features[col].nunique(dropna=True) > 1:
+                            valid_cols.append(col)
+                    except:
+                        continue
+                
+                if len(valid_cols) > 1:
+                    # Calcular correlação apenas com colunas válidas
+                    valid_features = numeric_features[valid_cols]
+                    corr_matrix = valid_features.corr(method='pearson').abs()
+                    
+                    # Verificar se a matriz de correlação é válida
+                    if not corr_matrix.isna().all().all():
+                        high_corr_pairs = []
+                        
+                        for i in range(len(corr_matrix.columns)):
+                            for j in range(i+1, len(corr_matrix.columns)):
+                                try:
+                                    corr_val = corr_matrix.iloc[i, j]
+                                    corr_value = np.asarray(corr_val).item() if corr_val is not None else 0.0
+                                    
+                                    # Verificar se a correlação é válida e alta
+                                    if (not pd.isna(corr_value) and 
+                                        np.isfinite(corr_value) and 
+                                        corr_value > 0.95):
+                                        high_corr_pairs.append((
+                                            corr_matrix.columns[i], 
+                                            corr_matrix.columns[j], 
+                                            corr_value
+                                        ))
+                                except (TypeError, ValueError, OverflowError):
+                                    # Pular correlações inválidas
+                                    continue
+                        
+                        validation_report['correlation_issues'] = high_corr_pairs
+                    else:
+                        self.logger.warning("⚠️ Matriz de correlação inválida - pulando verificação")
+                        validation_report['correlation_issues'] = []
+                else:
+                    self.logger.info("Menos de 2 features válidas para correlação")
+                    validation_report['correlation_issues'] = []
+                    
+            except Exception as e:
+                self.logger.warning(f"⚠️ Erro ao calcular correlações: {e}")
+                validation_report['correlation_issues'] = []
         
         # Log resumo
         issues = sum([
