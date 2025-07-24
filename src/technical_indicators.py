@@ -223,6 +223,11 @@ class TechnicalIndicators:
             atr = true_range.ewm(span=period, adjust=False).mean()
             indicators['atr'] = atr
             
+            # ATR para diferentes períodos
+            if period == 14:  # Período padrão
+                atr_20 = true_range.ewm(span=20, adjust=False).mean()
+                indicators['atr_20'] = atr_20
+            
             # ATR percentage (normalizado pelo preço)
             indicators['atr_pct'] = (atr / candles['close']) * 100
             

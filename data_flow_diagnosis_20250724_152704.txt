@@ -1,0 +1,48 @@
+
+RELATÓRIO DE DIAGNÓSTICO - FLUXO DE DADOS ML
+==========================================
+Data/Hora: 2025-07-24 15:27:04
+Baseado em: complete_ml_data_flow_map.md
+
+ETAPAS PROCESSADAS:
+------------------
+1. ✓ Carregamento dos Modelos
+2. ✓ Carregamento de Dados Históricos
+3. ✓ Cálculo de Indicadores Técnicos
+4. ✓ Geração de Features ML
+5. ✓ Combinação e Alinhamento
+6. ✓ Preenchimento Inteligente
+7. ✓ Validação para Modelos
+
+ESTATÍSTICAS FINAIS:
+-------------------
+Candles processados: 150
+Indicadores técnicos: 54
+Features ML: 106
+Colunas totais: 168
+Taxa de preenchimento: 100.0%
+Tempo de processamento: 0.18s
+
+VALIDAÇÃO DE MODELOS:
+--------------------
+ensemble_production: 96.7% cobertura
+fallback_model: 100.0% cobertura
+
+FEATURES CRÍTICAS:
+-----------------
+Disponíveis (10): close, volume, ema_9, ema_20, rsi_14, atr, momentum_5, volatility_10, parkinson_vol_10, vwap
+Faltantes (0): Nenhuma
+
+ESTRUTURA FINAL DOS DADOS:
+-------------------------
+Shape: (150, 168)
+Colunas: 168
+Período: 2025-07-24 12:57:04.262011 a 2025-07-24 15:26:04.262011
+
+CONCLUSÃO:
+----------
+O fluxo de dados está funcionando conforme especificação do mapa.
+Sistema capaz de processar dados históricos, calcular features
+avançadas e preparar dados para predições ML.
+
+STATUS: OPERACIONAL

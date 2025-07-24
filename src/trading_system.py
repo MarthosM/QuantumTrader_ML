@@ -584,7 +584,7 @@ class TradingSystem:
                         self.logger.info("Dados históricos solicitados com sucesso!")
                         self.logger.info("Aguardando recebimento via callback...")
                         
-                        success = self.connection.wait_for_historical_data(timeout_seconds=120)
+                        success = self.connection.wait_for_historical_data(timeout_seconds=30)  # Reduzido para debugging
                         
                         if success:
                             self.logger.info(f"Dados históricos recebidos com sucesso!")
@@ -896,6 +896,12 @@ class TradingSystem:
                 if self._should_check_contract():
                     self._check_contract_rollover()
 
+                # Debug do loop principal (apenas a cada 30 segundos)
+                if not hasattr(self, '_last_loop_debug') or time.time() - self._last_loop_debug > 30:
+                    candles_count = len(self.data_structure.candles) if self.data_structure and hasattr(self.data_structure, 'candles') else 0
+                    self.logger.info(f"[MAIN LOOP DEBUG] 🔄 Loop principal ativo - {candles_count} candles - ML interval: {self.ml_interval}s")
+                    self._last_loop_debug = time.time()
+
                 # Verificar se deve fazer predição ML
                 if self._should_run_ml():
                     self._request_ml_prediction()
@@ -995,10 +1001,21 @@ class TradingSystem:
     def _should_run_ml(self) -> bool:
         """Verifica se deve executar predição ML"""
         if self.last_ml_time is None:
+            self.logger.info("[ML TIMING DEBUG] ✅ Primeira execução ML - deve executar")
             return True
             
         elapsed = time.time() - self.last_ml_time
-        return elapsed >= self.ml_interval
+        should_run = elapsed >= self.ml_interval
+        
+        if should_run:
+            self.logger.info(f"[ML TIMING DEBUG] ✅ Tempo decorrido {elapsed:.1f}s >= {self.ml_interval}s - deve executar")
+        else:
+            remaining = self.ml_interval - elapsed
+            if not hasattr(self, '_last_timing_log') or time.time() - self._last_timing_log > 30:
+                self.logger.info(f"[ML TIMING DEBUG] ⏱️ Aguardando {remaining:.1f}s para próxima execução")
+                self._last_timing_log = time.time()
+        
+        return should_run
     
     def _should_check_contract(self) -> bool:
         """Verifica se deve checar mudança de contrato"""
@@ -1069,28 +1086,39 @@ class TradingSystem:
             
     def _request_ml_prediction(self):
         """Solicita predição ML"""
+        self.logger.info("[ML REQUEST DEBUG] 📨 Solicitando predição ML...")
+        
         if not self.ml_queue.full():
             self.ml_queue.put({
                 'type': 'predict',
                 'timestamp': datetime.now()
             })
             self.last_ml_time = time.time()
+            self.logger.info(f"[ML REQUEST DEBUG] ✅ Tarefa adicionada à fila (tamanho: {self.ml_queue.qsize()})")
+        else:
+            self.logger.warning(f"[ML REQUEST DEBUG] ⚠️ Fila ML cheia! Tamanho: {self.ml_queue.qsize()}")
             
     def _ml_worker(self):
         """Thread worker para processamento ML"""
-        self.logger.info("ML worker iniciado")
+        self.logger.info("[ML WORKER DEBUG] 🔧 ML worker iniciado")
         
         while self.is_running:
             try:
                 # Pegar próxima tarefa
                 task = self.ml_queue.get(timeout=1.0)
                 
+                task_type = task.get('type', 'unknown')
+                self.logger.info(f"[ML WORKER DEBUG] 📋 Processando tarefa: {task_type}")
+                
                 if task['type'] == 'calculate_features':
                     self._process_feature_calculation()
                 elif task['type'] == 'predict':
                     self._process_ml_prediction()
+                else:
+                    self.logger.warning(f"[ML WORKER DEBUG] ⚠️ Tipo de tarefa desconhecido: {task_type}")
                     
                 self.ml_queue.task_done()
+                self.logger.info(f"[ML WORKER DEBUG] ✅ Tarefa {task_type} concluída")
                 
             except queue.Empty:
                 continue
@@ -1107,37 +1135,151 @@ class TradingSystem:
                 self.logger.warning("Feature engine ou data structure não disponível")
                 return
                 
-            # Calcular features
-            result = self.feature_engine.calculate(self.data_structure)
+            # Diagnóstico ANTES do cálculo
+            candles_count = len(self.data_structure.candles) if hasattr(self.data_structure, 'candles') else 0
+            self.logger.info(f"[FEATURES DEBUG] Iniciando cálculo com {candles_count} candles")
             
-            # Log apenas mudanças significativas
-            if 'model_ready' in result:
-                features_count = len(result['model_ready'].columns)
-                if not hasattr(self, '_last_features_count') or self._last_features_count != features_count:
-                    self.logger.info(f"Features calculadas: {features_count} colunas")
-                    self._last_features_count = features_count
+            # Calcular features
+            import time
+            start_time = time.time()
+            result = self.feature_engine.calculate(self.data_structure)
+            calc_time = time.time() - start_time
+            
+            # Diagnóstico DETALHADO do resultado
+            if result and result.get('success', False):
+                features_df = result.get('features')
+                if features_df is not None:
+                    # Estatísticas básicas
+                    features_count = len(features_df.columns)
+                    rows_count = len(features_df)
+                    nan_count = features_df.isnull().sum().sum()
+                    total_values = features_df.size
+                    fill_rate = ((total_values - nan_count) / total_values) * 100 if total_values > 0 else 0
+                    
+                    self.logger.info(f"[FEATURES DEBUG] ✅ CÁLCULO CONCLUÍDO")
+                    self.logger.info(f"[FEATURES DEBUG] Shape: ({rows_count}, {features_count})")
+                    self.logger.info(f"[FEATURES DEBUG] Tempo: {calc_time:.3f}s")
+                    self.logger.info(f"[FEATURES DEBUG] Preenchimento: {fill_rate:.1f}%")
+                    self.logger.info(f"[FEATURES DEBUG] NaN: {nan_count}/{total_values}")
+                    
+                    # Verificar features críticas
+                    critical_features = ['close', 'volume', 'ema_9', 'ema_20', 'rsi_14', 'atr']
+                    available_critical = [f for f in critical_features if f in features_df.columns]
+                    self.logger.info(f"[FEATURES DEBUG] Features críticas: {len(available_critical)}/{len(critical_features)}")
+                    
+                    # Mostrar últimos valores de algumas features críticas
+                    if available_critical:
+                        last_values = {}
+                        for feat in available_critical[:5]:  # Primeiras 5
+                            try:
+                                last_val = features_df[feat].iloc[-1]
+                                last_values[feat] = f"{last_val:.4f}" if pd.notna(last_val) else "NaN"
+                            except:
+                                last_values[feat] = "ERROR"
+                        self.logger.info(f"[FEATURES DEBUG] Últimos valores: {last_values}")
+                    
+                    # Verificar se DataFrame mudou significativamente
+                    if not hasattr(self, '_last_features_count') or self._last_features_count != features_count:
+                        self.logger.info(f"[FEATURES DEBUG] 🔄 FEATURES ATUALIZADAS: {features_count} colunas")
+                        self._last_features_count = features_count
+                        
+                        # Log das categorias de features
+                        categories = {
+                            'precos': [c for c in features_df.columns if any(x in c.lower() for x in ['open', 'high', 'low', 'close'])],
+                            'emas': [c for c in features_df.columns if 'ema' in c.lower()],
+                            'indicadores': [c for c in features_df.columns if any(x in c.lower() for x in ['rsi', 'atr', 'bb_'])],
+                            'momentum': [c for c in features_df.columns if 'momentum' in c.lower()],
+                            'volatilidade': [c for c in features_df.columns if 'vol' in c.lower()],
+                            'retornos': [c for c in features_df.columns if 'return' in c.lower()]
+                        }
+                        
+                        for cat, feats in categories.items():
+                            if feats:
+                                self.logger.info(f"[FEATURES DEBUG] {cat.capitalize()}: {len(feats)} features")
+                    
+                    # Armazenar resultado na data_structure se possível
+                    if hasattr(self.data_structure, 'update_features'):
+                        self.data_structure.update_features(features_df)
+                        self.logger.info(f"[FEATURES DEBUG] ✅ Features armazenadas na data_structure")
+                    
+                else:
+                    self.logger.error(f"[FEATURES DEBUG] ❌ Resultado sem DataFrame de features")
+            else:
+                error_msg = result.get('error', 'Erro desconhecido') if result else 'Resultado None'
+                self.logger.error(f"[FEATURES DEBUG] ❌ FALHA NO CÁLCULO: {error_msg}")
                     
         except Exception as e:
-            self.logger.error(f"Erro calculando features: {e}")
+            self.logger.error(f"[FEATURES DEBUG] ❌ EXCEÇÃO: {e}", exc_info=True)
             
     def _process_ml_prediction(self):
         """Processa predição ML"""
         try:
+            # Diagnóstico INICIAL
+            self.logger.info(f"[PREDICTION DEBUG] 🎯 INICIANDO PROCESSO DE PREDIÇÃO")
+            
             # Verificar dados suficientes
             if not self.data_structure or not hasattr(self.data_structure, 'candles'):
-                self.logger.warning("Data structure não disponível")
+                self.logger.error("[PREDICTION DEBUG] ❌ Data structure não disponível")
                 return
                 
-            if len(self.data_structure.candles) < 50:
+            candles_count = len(self.data_structure.candles)
+            if candles_count < 50:
+                self.logger.warning(f"[PREDICTION DEBUG] ⚠️ Poucos candles: {candles_count} < 50")
                 return
+                
+            self.logger.info(f"[PREDICTION DEBUG] ✅ Dados suficientes: {candles_count} candles")
                 
             # Verificar ML coordinator
             if not self.ml_coordinator:
-                self.logger.warning("ML coordinator não disponível")
+                self.logger.error("[PREDICTION DEBUG] ❌ ML coordinator não disponível")
                 return
                 
-            # Executar predição
+            self.logger.info(f"[PREDICTION DEBUG] ✅ ML coordinator disponível")
+            
+            # Verificar se features estão disponíveis na data_structure
+            features_available = False
+            features_count = 0
+            if hasattr(self.data_structure, 'features') and hasattr(self.data_structure.features, 'shape'):
+                if not self.data_structure.features.empty:
+                    features_available = True
+                    features_count = len(self.data_structure.features.columns)
+                    
+            self.logger.info(f"[PREDICTION DEBUG] Features na data_structure: {features_available} ({features_count} colunas)")
+            
+            # Executar predição com diagnóstico
+            self.logger.info(f"[PREDICTION DEBUG] 🔄 Executando predição via MLCoordinator...")
+            import time
+            pred_start = time.time()
             prediction = self.ml_coordinator.process_prediction_request(self.data_structure)
+            pred_time = time.time() - pred_start
+            
+            # Diagnóstico do RESULTADO
+            if prediction:
+                self.logger.info(f"[PREDICTION DEBUG] ✅ PREDIÇÃO REALIZADA em {pred_time:.3f}s")
+                
+                # Analisar conteúdo da predição
+                pred_fields = list(prediction.keys())
+                self.logger.info(f"[PREDICTION DEBUG] Campos da predição: {pred_fields}")
+                
+                # Extrair informações principais
+                action = prediction.get('action', 'N/A')
+                confidence = prediction.get('confidence', 0)
+                direction = prediction.get('direction', 'N/A')
+                
+                self.logger.info(f"[PREDICTION DEBUG] 🎯 RESULTADO:")
+                self.logger.info(f"[PREDICTION DEBUG]   • Ação: {action}")
+                self.logger.info(f"[PREDICTION DEBUG]   • Confiança: {confidence:.4f}")
+                self.logger.info(f"[PREDICTION DEBUG]   • Direção: {direction}")
+                
+                # Verificar se há informações adicionais úteis
+                additional_info = {k: v for k, v in prediction.items() if k not in ['action', 'confidence', 'direction']}
+                if additional_info:
+                    self.logger.info(f"[PREDICTION DEBUG] Info adicional: {list(additional_info.keys())}")
+                
+            else:
+                self.logger.error(f"[PREDICTION DEBUG] ❌ PREDIÇÃO FALHOU - Retornou None")
+                self.logger.error(f"[PREDICTION DEBUG] Verificar MLCoordinator e modelos")
+                return
             
             if prediction:
                 self.last_prediction = prediction

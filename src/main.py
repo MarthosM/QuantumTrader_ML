@@ -43,7 +43,7 @@ def load_config():
         'models_dir': os.getenv('MODELS_DIR', r'C:\Users\marth\OneDrive\Programacao\Python\Projetos\ML_Tradingv2.0\src\models\models_regime3'),
         'ticker': os.getenv('TICKER'),
         'historical_days': int(os.getenv('HISTORICAL_DAYS', '1')),
-        'ml_interval': int(os.getenv('ML_INTERVAL', '60')),
+        'ml_interval': int(os.getenv('ML_INTERVAL', '10')),  # Reduzido para debugging
         'initial_balance': float(os.getenv('INITIAL_BALANCE', '100000')),
         'strategy': {
             'direction_threshold': float(os.getenv('DIRECTION_THRESHOLD', '0.45')),
@@ -55,7 +55,7 @@ def load_config():
             'max_positions': int(os.getenv('MAX_POSITIONS', '1')),
             'risk_per_trade': float(os.getenv('RISK_PER_TRADE', '0.02'))
         },
-        'use_gui': os.getenv('USE_GUI', 'true').lower() == 'true'
+        'use_gui': os.getenv('USE_GUI', 'false').lower() == 'true'  # Desabilitado para debugging
     }
     
     return config

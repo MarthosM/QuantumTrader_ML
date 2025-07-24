@@ -135,6 +135,14 @@ class MLFeatures:
                         candles['close'].shift(base_period).replace(0, 1)
                     ) * 100
             
+            # Features básicas para compatibilidade
+            if len(candles) > 1:
+                # Returns (retornos simples) - compatibilidade fallback model
+                features['returns'] = candles['close'].pct_change() * 100
+                
+                # Volatility (volatilidade de 20 períodos) - compatibilidade fallback model
+                features['volatility'] = features['returns'].rolling(20).std()
+            
             # Features de retorno com volume
             for period in self.default_features['return_periods']:
                 if len(candles) > period:
@@ -289,6 +297,9 @@ class MLFeatures:
                     candles['volume'].rolling(20).sum().replace(0, 1)
                 )
                 features['price_to_vwap'] = (candles['close'] / features['vwap'] - 1) * 100
+            
+            # Advanced Volatility Features
+            self._calculate_advanced_volatility_features(candles, features)
             
             # On-Balance Volume (OBV)
             if len(candles) > 1:
@@ -455,6 +466,54 @@ class MLFeatures:
                 
         except Exception as e:
             self.logger.error(f"Erro calculando padrões: {e}")
+    
+    def _calculate_advanced_volatility_features(self, candles: pd.DataFrame, features: pd.DataFrame):
+        """Calcula features avançadas de volatilidade (Parkinson, Garman-Klass)"""
+        try:
+            if len(candles) < 20:
+                return
+                
+            # Parkinson Volatility
+            # Estimador de volatilidade baseado em high e low (menos ruído que close-to-close)
+            log_hl_ratio = np.log(candles['high'] / candles['low'])
+            parkinson_estimator = (1 / (4 * np.log(2))) * (log_hl_ratio ** 2)
+            
+            # Períodos múltiplos para Parkinson
+            for period in [10, 20]:
+                features[f'parkinson_vol_{period}'] = np.sqrt(
+                    parkinson_estimator.rolling(period).mean() * 252  # Anualizada
+                )
+            
+            # Garman-Klass Volatility
+            # Estimador ainda mais eficiente que usa OHLC
+            log_hc = np.log(candles['high'] / candles['close'])
+            log_ho = np.log(candles['high'] / candles['open'])
+            log_lc = np.log(candles['low'] / candles['close'])
+            log_lo = np.log(candles['low'] / candles['open'])
+            log_co = np.log(candles['close'] / candles['open'])
+            
+            gk_estimator = (
+                0.5 * (log_hc * log_ho + log_lc * log_lo) - 
+                0.39 * (log_co ** 2)
+            )
+            
+            # Períodos múltiplos para Garman-Klass
+            for period in [10, 20]:
+                features[f'gk_vol_{period}'] = np.sqrt(
+                    gk_estimator.rolling(period).mean() * 252  # Anualizada
+                )
+            
+            # Features de volatilidade com lag (dependências temporais)
+            if 'volatility_20' in features.columns:
+                vol_20 = features['volatility_20']
+                features['volatility_20_lag_1'] = vol_20.shift(1)
+                features['volatility_20_lag_5'] = vol_20.shift(5)
+                features['volatility_20_lag_10'] = vol_20.shift(10)
+            
+            self.logger.debug("Features avançadas de volatilidade calculadas com sucesso")
+            
+        except Exception as e:
+            self.logger.error(f"Erro calculando features avançadas de volatilidade: {e}")
     
     def get_feature_importance(self) -> Dict[str, List[str]]:
         """Retorna features agrupadas por importância/categoria"""
