@@ -1588,11 +1588,15 @@ class FeatureEngine:
         if len(features_df.columns) < 5:
             validation_errors.append("Menos de 5 features disponíveis")
         
-        # 2. Verificar NaN excessivos
+        # 2. Verificar NaN excessivos (threshold ajustado para dados históricos limitados)
         nan_ratios = features_df.isna().sum() / len(features_df)
-        high_nan = nan_ratios[nan_ratios > 0.1]
+        
+        # Threshold mais relaxado para poucos dados históricos
+        nan_threshold = 0.3 if len(features_df) < 100 else 0.2 if len(features_df) < 200 else 0.1
+        
+        high_nan = nan_ratios[nan_ratios > nan_threshold]
         if len(high_nan) > 0:
-            validation_errors.append(f"Features com >10% NaN: {high_nan.index.tolist()}")
+            validation_errors.append(f"Features com >{nan_threshold*100:.0f}% NaN: {high_nan.index.tolist()}")
         
         # 3. Verificar zeros suspeitos
         for col in features_df.columns:

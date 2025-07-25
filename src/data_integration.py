@@ -19,7 +19,7 @@ class DataIntegration:
         self.logger = logging.getLogger('DataIntegration')
         
         # Buffer para trades (thread-safe)
-        self.trades_buffer = deque(maxlen=10000)  # Últimos 10k trades
+        self.trades_buffer = deque()  # Sem limite para dados históricos
         self.buffer_lock = Lock()
         
         # Buffer para candles (processamento em lote)
@@ -97,14 +97,19 @@ class DataIntegration:
             if not self._validate_trade(trade_data):
                 return
             
-            # Para dados históricos, armazenar TODOS os trades no buffer
+            # Para dados históricos, armazenar no buffer com processamento em lotes
             is_historical = trade_data.get('is_historical', False)
             
             if is_historical:
-                # Durante carregamento histórico, apenas armazenar no buffer
+                # Durante carregamento histórico, armazenar no buffer
                 with self.buffer_lock:
                     self.trades_buffer.append(trade_data)
-                # Não processar candles individualmente durante histórico
+                    
+                # Processar em lotes de 50.000 trades para evitar estouro de memória
+                if len(self.trades_buffer) >= 50000:
+                    self.logger.info(f"🔄 Processando lote de {len(self.trades_buffer)} trades históricos...")
+                    self._process_batch_historical_trades()
+                    
                 return
             
             # Para dados em tempo real, usar a lógica normal
@@ -650,6 +655,29 @@ class DataIntegration:
         except Exception as e:
             self.logger.error(f"Erro criando candle: {e}")
             return None
+    
+    def _process_batch_historical_trades(self):
+        """Processa lote de trades históricos para evitar estouro de memória"""
+        try:
+            if not self.trades_buffer:
+                return
+                
+            batch_size = len(self.trades_buffer)
+            self.logger.info(f"📦 Processando lote de {batch_size} trades históricos...")
+            
+            # Processar candles do lote atual
+            self._process_all_pending_candles()
+            
+            # Flush candles processados
+            with self.candles_buffer_lock:
+                if self.candles_buffer:
+                    self.logger.info(f"🔄 Flush de {len(self.candles_buffer)} candles do lote")
+                    self._flush_candles_buffer()
+            
+            self.logger.info(f"✅ Lote de {batch_size} trades processado com sucesso")
+            
+        except Exception as e:
+            self.logger.error(f"Erro processando lote histórico: {e}")
     
     def get_candles(self, interval: str = '1min') -> pd.DataFrame:
         """

@@ -1257,7 +1257,12 @@ class TradingSystem:
                 self.logger.info(f"[FEATURES DEBUG] ✅ CÁLCULO CONCLUÍDO - Keys disponíveis: {list(result.keys())}")
                 
                 # Tentar diferentes chaves possíveis para o DataFrame principal
-                features_df = result.get('features') or result.get('model_ready') or result.get('basic') or None
+                features_df = None
+                for key in ['features', 'model_ready', 'basic']:
+                    df = result.get(key)
+                    if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
+                        features_df = df
+                        break
                 if features_df is None and result:
                     # Se não encontrou com chaves conhecidas, pegar a primeira DataFrame
                     for key, value in result.items():
