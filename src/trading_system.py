@@ -142,6 +142,9 @@ class TradingSystem:
         self.last_historical_load_time = None
         self.gap_fill_in_progress = False
         
+        # Evento para sincronizar carregamento de dados históricos
+        self.historical_data_ready = threading.Event()
+        
         # Threads e queues
         self.ml_queue = queue.Queue(maxsize=10)
         self.signal_queue = queue.Queue(maxsize=10)
@@ -364,8 +367,10 @@ class TradingSystem:
             # 5. Configurar engine de features
             self.logger.info("5. Configurando engine de features...")
             all_features = self._get_all_required_features()
-            self.feature_engine = FeatureEngine(list(all_features))
-            self.logger.info(f"[ok] Feature engine configurado com {len(all_features)} features")
+            # Permitir dados históricos quando não estamos em produção
+            allow_historical = os.getenv('TRADING_ENV') != 'production'
+            self.feature_engine = FeatureEngine(list(all_features), allow_historical_data=allow_historical)
+            self.logger.info(f"[ok] Feature engine configurado com {len(all_features)} features (histórico={'permitido' if allow_historical else 'bloqueado'})")
             
             # 6. Configurar ML coordinator
             self.logger.info("6. Configurando ML coordinator...")
@@ -584,10 +589,45 @@ class TradingSystem:
                         self.logger.info("Dados históricos solicitados com sucesso!")
                         self.logger.info("Aguardando recebimento via callback...")
                         
-                        success = self.connection.wait_for_historical_data(timeout_seconds=30)  # Reduzido para debugging
+                        success = self.connection.wait_for_historical_data(timeout_seconds=180)  # 3 minutos para dados completos
                         
                         if success:
                             self.logger.info(f"Dados históricos recebidos com sucesso!")
+                            
+                            # 🔧 CORREÇÃO CRÍTICA: Aguardar processamento de candles
+                            self.logger.info("⏳ Aguardando processamento de todos os trades em candles...")
+                            import time
+                            
+                            # Aguardar em etapas para dar feedback ao usuário
+                            for i in range(5):
+                                time.sleep(1)
+                                if self.data_integration and hasattr(self.data_integration, 'candles_1min'):
+                                    candles_count = len(self.data_integration.candles_1min)
+                                    self.logger.info(f"   {i+1}s: {candles_count} candles processados...")
+                                else:
+                                    self.logger.info(f"   {i+1}s: Aguardando...")
+                            
+                            # Sincronizar dados históricos com data_structure
+                            candles_synced = False
+                            
+                            # Primeiro tentar data_integration (onde os candles são formados)
+                            if self.data_integration and hasattr(self.data_integration, 'candles_1min') and not self.data_integration.candles_1min.empty:
+                                candles_df = self.data_integration.candles_1min
+                                self.logger.info(f"Sincronizando {len(candles_df)} candles de data_integration.candles_1min...")
+                                self.data_structure.update_candles(candles_df.copy())
+                                candles_synced = True
+                            
+                            # Fallback para data_loader se necessário
+                            elif self.data_loader and hasattr(self.data_loader, 'candles_df') and not self.data_loader.candles_df.empty:
+                                candles_df = self.data_loader.candles_df
+                                self.logger.info(f"Sincronizando {len(candles_df)} candles de data_loader.candles_df...")
+                                self.data_structure.update_candles(candles_df.copy())
+                                candles_synced = True
+                            
+                            if candles_synced:
+                                self.logger.info(f"✅ Dados sincronizados: {len(self.data_structure.candles)} candles no data_structure")
+                            else:
+                                self.logger.warning("⚠️ Nenhum candle disponível para sincronizar!")
                             
                             # 🛡️ VALIDAÇÃO OBRIGATÓRIA - Dados de produção
                             # Validar dados recebidos (verificação condicional)
@@ -610,6 +650,10 @@ class TradingSystem:
                                 
                             self._check_and_fill_temporal_gap()
                             
+                            # Sinalizar que os dados históricos estão prontos
+                            self.historical_data_ready.set()
+                            self.logger.info("✅ Evento historical_data_ready sinalizado")
+                            
                             return True
                         else:
                             self.logger.warning("Timeout ou erro ao receber dados históricos")
@@ -630,6 +674,11 @@ class TradingSystem:
                     if not candles_df.empty:
                         self.data_structure.update_candles(candles_df)
                         self.logger.info(f"Dados carregados do cache: {len(candles_df)} candles")
+                        
+                        # Sinalizar que os dados estão prontos
+                        self.historical_data_ready.set()
+                        self.logger.info("✅ Evento historical_data_ready sinalizado (cache)")
+                        
                         return True
                 
             # Opção 3: Modo desenvolvimento com aviso claro
@@ -672,6 +721,11 @@ class TradingSystem:
                 if not test_df.empty:
                     self.data_structure.update_candles(test_df)
                     self.logger.info(f"Dados de teste carregados: {len(test_df)} candles")
+                    
+                    # Sinalizar que os dados estão prontos
+                    self.historical_data_ready.set()
+                    self.logger.info("✅ Evento historical_data_ready sinalizado (teste)")
+                    
                     return True
             except Exception as e:
                 self.logger.warning(f"Erro carregando arquivo de teste: {e}")
@@ -721,22 +775,32 @@ class TradingSystem:
             self.logger.info("Carregando dados históricos...")
             days_back = self.config.get('historical_days', 1)
             
+            # Limpar evento antes de iniciar carregamento
+            self.historical_data_ready.clear()
+            
             if not self._load_historical_data_safe(self.ticker, days_back):
                 self.logger.error("Falha ao carregar dados históricos")
+                return False
+            
+            # 2. Aguardar dados históricos estarem completamente carregados
+            self.logger.info("Aguardando conclusão do carregamento de dados históricos...")
+            if not self.historical_data_ready.wait(timeout=180):  # 3 minutos
+                self.logger.error("Timeout aguardando dados históricos")
                 return False
                 
             self.logger.info(f"✓ {len(self.data_structure.candles) if self.data_structure else 0} candles carregadas")
             
-            # 2. Calcular indicadores e features iniciais
+            # 3. Calcular indicadores e features iniciais APENAS após dados prontos
             self.logger.info("Calculando indicadores e features iniciais...")
             self._calculate_initial_features()
             
-            # 3. Iniciar threads de processamento
+            # 3. CORREÇÃO CRÍTICA: Marcar sistema como rodando ANTES das threads
+            self.is_running = True
+            self.logger.info("✅ Sistema marcado como is_running = True")
+            
+            # 4. Iniciar threads de processamento
             self.logger.info("Iniciando threads de processamento...")
             self._start_processing_threads()
-            
-            # 4. Marcar sistema como rodando
-            self.is_running = True
             
             # 5. Solicitar dados em tempo real
             self.logger.info(f"Solicitando dados em tempo real para {self.ticker}")
@@ -886,6 +950,14 @@ class TradingSystem:
         """Loop principal do sistema"""
         self.logger.info("Entrando no loop principal...")
         
+        # Aguardar dados históricos antes de iniciar processamento
+        if not self.historical_data_ready.is_set():
+            self.logger.info("[MAIN LOOP] ⏳ Aguardando dados históricos antes de iniciar processamento...")
+            if not self.historical_data_ready.wait(timeout=180):  # 3 minutos
+                self.logger.error("[MAIN LOOP] ❌ Timeout aguardando dados históricos!")
+                return
+            self.logger.info("[MAIN LOOP] ✅ Dados históricos prontos, iniciando loop principal")
+        
         try:
             while self.is_running:
                 # Verificar se deve recalcular features
@@ -992,6 +1064,10 @@ class TradingSystem:
         
     def _should_calculate_features(self) -> bool:
         """Verifica se deve recalcular features"""
+        # Não calcular se dados históricos não estão prontos
+        if not self.historical_data_ready.is_set():
+            return False
+            
         if self.last_feature_calc is None:
             return True
             
@@ -1000,6 +1076,10 @@ class TradingSystem:
         
     def _should_run_ml(self) -> bool:
         """Verifica se deve executar predição ML"""
+        # Não executar ML se dados históricos não estão prontos
+        if not self.historical_data_ready.is_set():
+            return False
+            
         if self.last_ml_time is None:
             self.logger.info("[ML TIMING DEBUG] ✅ Primeira execução ML - deve executar")
             return True
@@ -1102,6 +1182,14 @@ class TradingSystem:
         """Thread worker para processamento ML"""
         self.logger.info("[ML WORKER DEBUG] 🔧 ML worker iniciado")
         
+        # Aguardar dados históricos estarem prontos antes de processar tarefas
+        self.logger.info("[ML WORKER DEBUG] ⏳ Aguardando dados históricos...")
+        if not self.historical_data_ready.wait(timeout=300):  # 5 minutos
+            self.logger.error("[ML WORKER DEBUG] ❌ Timeout aguardando dados históricos!")
+            return
+            
+        self.logger.info("[ML WORKER DEBUG] ✅ Dados históricos prontos, iniciando processamento")
+        
         while self.is_running:
             try:
                 # Pegar próxima tarefa
@@ -1139,6 +1227,24 @@ class TradingSystem:
             candles_count = len(self.data_structure.candles) if hasattr(self.data_structure, 'candles') else 0
             self.logger.info(f"[FEATURES DEBUG] Iniciando cálculo com {candles_count} candles")
             
+            # 🔧 CORREÇÃO: Verificar dados mínimos necessários
+            if candles_count < 50:  # Mínimo para calcular features técnicas
+                self.logger.warning(f"[FEATURES DEBUG] ⚠️ Dados insuficientes ({candles_count} < 50 candles) - pulando cálculo")
+                return
+            
+            # 🛡️ VALIDAÇÃO ADICIONAL: Garantir que são dados reais
+            if os.getenv('TRADING_ENV') == 'production':
+                try:
+                    if hasattr(self.data_structure, 'candles') and not self.data_structure.candles.empty:
+                        self._validate_production_data(
+                            self.data_structure.candles.tail(10), 
+                            'feature_calculation', 
+                            'candles'
+                        )
+                except Exception as e:
+                    self.logger.error(f"[FEATURES DEBUG] ❌ Validação de dados falhou: {e}")
+                    return
+            
             # Calcular features
             import time
             start_time = time.time()
@@ -1146,9 +1252,21 @@ class TradingSystem:
             calc_time = time.time() - start_time
             
             # Diagnóstico DETALHADO do resultado
-            if result and result.get('success', False):
-                features_df = result.get('features')
-                if features_df is not None:
+            # feature_engine.calculate() retorna Dict[str, pd.DataFrame] ou levanta exceção
+            if result and isinstance(result, dict) and len(result) > 0:
+                self.logger.info(f"[FEATURES DEBUG] ✅ CÁLCULO CONCLUÍDO - Keys disponíveis: {list(result.keys())}")
+                
+                # Tentar diferentes chaves possíveis para o DataFrame principal
+                features_df = result.get('features') or result.get('model_ready') or result.get('basic') or None
+                if features_df is None and result:
+                    # Se não encontrou com chaves conhecidas, pegar a primeira DataFrame
+                    for key, value in result.items():
+                        if isinstance(value, pd.DataFrame) and not value.empty:
+                            features_df = value
+                            self.logger.info(f"[FEATURES DEBUG] Usando DataFrame da chave: '{key}'")
+                            break
+                
+                if features_df is not None and isinstance(features_df, pd.DataFrame):
                     # Estatísticas básicas
                     features_count = len(features_df.columns)
                     rows_count = len(features_df)
@@ -1203,10 +1321,19 @@ class TradingSystem:
                         self.logger.info(f"[FEATURES DEBUG] ✅ Features armazenadas na data_structure")
                     
                 else:
-                    self.logger.error(f"[FEATURES DEBUG] ❌ Resultado sem DataFrame de features")
+                    self.logger.error(f"[FEATURES DEBUG] ❌ Resultado sem DataFrame de features válido")
+                    if result:
+                        self.logger.error(f"[FEATURES DEBUG] ❌ Keys disponíveis: {list(result.keys())}")
+                        for key, value in result.items():
+                            self.logger.error(f"[FEATURES DEBUG] ❌ {key}: {type(value)} - {getattr(value, 'shape', 'N/A')}")
             else:
-                error_msg = result.get('error', 'Erro desconhecido') if result else 'Resultado None'
-                self.logger.error(f"[FEATURES DEBUG] ❌ FALHA NO CÁLCULO: {error_msg}")
+                # Result vazio ou None
+                if result is None:
+                    self.logger.error(f"[FEATURES DEBUG] ❌ RESULTADO NONE - feature_engine.calculate() retornou None")
+                elif not isinstance(result, dict):
+                    self.logger.error(f"[FEATURES DEBUG] ❌ RESULTADO INVÁLIDO - Tipo: {type(result)}")
+                else:
+                    self.logger.error(f"[FEATURES DEBUG] ❌ RESULTADO VAZIO - Dict vazio retornado")
                     
         except Exception as e:
             self.logger.error(f"[FEATURES DEBUG] ❌ EXCEÇÃO: {e}", exc_info=True)

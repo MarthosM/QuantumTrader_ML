@@ -99,6 +99,32 @@ class DataLoader:
         except Exception as e:
             self.logger.error(f"Erro criando/atualizando candle: {e}")
             return None
+    
+    def finalize_pending_candle(self):
+        """Finaliza candle pendente quando dados históricos terminam"""
+        try:
+            if self.current_candle is not None:
+                # Criar DataFrame com o candle pendente
+                candle_df = pd.DataFrame([self.current_candle])
+                candle_df.set_index('timestamp', inplace=True)
+                
+                # Adicionar ao DataFrame principal
+                if self.candles_df.empty:
+                    self.candles_df = candle_df.copy()
+                else:
+                    self.candles_df = pd.concat([self.candles_df, candle_df])
+                
+                self.logger.info(f"📊 Candle pendente finalizado. Total: {len(self.candles_df)}")
+                
+                # Limpar candle atual
+                self.current_candle = None
+                
+                return candle_df
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Erro finalizando candle pendente: {e}")
+            return None
     def create_sample_data(self, count: int = 100) -> pd.DataFrame:
         '''Cria dados de exemplo para testes'''
         

@@ -63,6 +63,7 @@ class ConnectionManager:
         
         # Contadores para debug
         self._historical_data_count = 0
+        self._last_historical_timestamp = None  # Para rastrear timestamp dos dados históricos
     
     def _configure_optimal_logging(self):
         """
@@ -347,8 +348,9 @@ class ConnectionManager:
                 elif self._historical_data_count % 10000 == 0:
                     self.logger.info(f"� {self._historical_data_count} dados históricos processados")
                 
-                # Incrementar contador
+                # Incrementar contador e atualizar último timestamp
                 self._historical_data_count += 1
+                self._last_historical_timestamp = timestamp
                 
                 # Notificar callbacks registrados sobre novo dado histórico
                 for callback in self.trade_callbacks:
@@ -680,15 +682,22 @@ class ConnectionManager:
                 end_date = end_date - timedelta(days=days_to_subtract)
                 self.logger.info(f"End_date ajustado para último dia útil: {end_date.date()}")
             
-            # Recalcular start_date após ajuste de end_date
-            start_date = end_date - timedelta(days=min(days_requested, 3))
+            # 🔧 ESTRATÉGIA: Solicitar apenas dados do dia atual para melhor performance
+            # Se é hoje, pegar dados desde 09:00 de hoje
+            if end_date.date() == datetime.now().date():
+                start_date = end_date.replace(hour=9, minute=0, second=0, microsecond=0)
+                self.logger.info(f"🎯 Solicitando dados APENAS DE HOJE: {start_date.strftime('%H:%M')} até agora")
+            else:
+                # Se não é hoje, usar lógica original
+                start_date = end_date - timedelta(days=min(days_requested, 1))  # Reduzido para 1 dia
+                self.logger.info(f"📅 Solicitando dados históricos: {start_date.date()} até {end_date.date()}")
             
-            self.logger.info(f"Solicitando dados históricos para {ticker} - LIMITE: 3 DIAS OTIMIZADO")
-            self.logger.info(f"Período final: {start_date.date()} até {end_date.date()} ({(end_date - start_date).days} dias)")
-            self.logger.info("⚡ OTIMIZADO: API funciona melhor com limite de 3 dias!")
+            self.logger.info(f"Período final: {start_date} até {end_date}")
+            self.logger.info("⚡ OTIMIZADO: Foco em dados do dia atual para melhor completude!")
             
             # RESET: Limpar contadores antes de nova requisição
             self._historical_data_count = 0
+            self._last_historical_timestamp = None
             
             # CORREÇÃO: Usar sistema inteligente de detecção de ticker
             tickers_to_try = self._get_smart_ticker_variations(ticker)
@@ -850,14 +859,16 @@ class ConnectionManager:
                     stable_count += 1
                     no_data_count += 1
                     
-                    # PROTEÇÃO 1: Se estável por 5 segundos e temos dados, considerar completo
+                    # PROTEÇÃO 1: Se estável por 5 segundos e temos dados, verificar se chegou até próximo da hora atual
                     if stable_count >= 10 and current_count > 0:  # 10 * 0.5s = 5s
-                        self.logger.info(f"✅ Dados históricos carregados: {current_count} registros em {elapsed:.1f}s")
-                        
-                        # NOVO: Notificar callbacks sobre fim do carregamento histórico
-                        self._notify_historical_data_complete()
-                        
-                        return True
+                        # 🔧 NOVA VERIFICAÇÃO: Verificar timestamp do último candle
+                        if self._is_historical_data_complete():
+                            self.logger.info(f"✅ Dados históricos carregados: {current_count} registros em {elapsed:.1f}s")
+                            self._notify_historical_data_complete()
+                            return True
+                        else:
+                            self.logger.info(f"⏳ Dados estáveis ({current_count} registros) mas ainda não chegaram até próximo da hora atual - continuando...")
+                            stable_count = 0  # Reset contador para continuar esperando
                     
                     # PROTEÇÃO 2: Se passou 90 segundos sem dados, desistir
                     if no_data_count >= 180 and current_count == 0:  # 180 * 0.5s = 90s
@@ -878,10 +889,15 @@ class ConnectionManager:
             if final_count > 0:
                 self.logger.warning(f"⚠️ Timeout após {elapsed_final:.1f}s, mas {final_count} dados foram recebidos")
                 
-                # NOVO: Mesmo com timeout, notificar fim do carregamento se temos dados
-                self._notify_historical_data_complete()
-                
-                return True
+                # 🔧 VERIFICAÇÃO: Mesmo com timeout, verificar se chegou próximo da hora atual
+                if self._is_historical_data_complete():
+                    self.logger.info("✅ Timeout mas dados históricos estão completos")
+                    self._notify_historical_data_complete()
+                    return True
+                else:
+                    self.logger.error("❌ Timeout e dados históricos incompletos - carregamento falhou")
+                    # NÃO notificar conclusão se dados incompletos
+                    return False
             else:
                 self.logger.error(f"❌ Timeout após {elapsed_final:.1f}s sem nenhum dado recebido")
                 return False
@@ -889,6 +905,35 @@ class ConnectionManager:
         except Exception as e:
             self.logger.error(f"Erro aguardando dados históricos: {e}")
             return False
+    
+    def _is_historical_data_complete(self) -> bool:
+        """
+        Verifica se os dados históricos chegaram até próximo da hora atual
+        """
+        try:
+            # Verificar se temos algum timestamp registrado
+            if self._last_historical_timestamp is None:
+                self.logger.warning("Nenhum timestamp de dados históricos registrado ainda")
+                return False  # Se não temos dados, não está completo
+                
+            current_time = datetime.now()
+            
+            # Calcular diferença em minutos
+            time_diff = (current_time - self._last_historical_timestamp).total_seconds() / 60
+            
+            self.logger.info(f"📊 Último dado histórico: {self._last_historical_timestamp.strftime('%H:%M')} | Atual: {current_time.strftime('%H:%M')} | Diff: {time_diff:.1f} min")
+            
+            # Se diferença é menor que 10 minutos, considerar completo
+            if time_diff <= 10:
+                self.logger.info("✅ Dados históricos chegaram até próximo da hora atual")
+                return True
+            else:
+                self.logger.info(f"⏳ Dados ainda defasados em {time_diff:.1f} minutos - continuando carregamento...")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Erro verificando completude dos dados históricos: {e}")
+            return True  # Em caso de erro, assumir completo para não travar
     
     def _notify_historical_data_complete(self):
         """

@@ -98,10 +98,12 @@ class ProductionDataValidator:
                 # Calcular autocorrelação do volume
                 if len(volumes) > 20:
                     autocorr = volumes.autocorr(lag=1)
-                    # Dados sintéticos geralmente têm baixa autocorrelação
+                    # REMOVIDO: Baixa autocorrelação pode ocorrer em dados reais
+                    # Especialmente em mercados voláteis ou com mudanças abruptas
                     if pd.notna(autocorr) and abs(autocorr) < 0.05:
                         self.logger.warning("Baixa autocorrelação no volume detectada")
-                        return True
+                        # NÃO considerar como sintético apenas por isso
+                        # return True
         
         # Verificar spreads muito uniformes
         if all(col in data.columns for col in ['high', 'low', 'close']):
@@ -109,8 +111,9 @@ class ProductionDataValidator:
             spread_std = spreads.std()
             
             # Spread muito uniforme = possível dado sintético
-            if spread_std < 0.00001:
-                self.logger.warning("Spreads muito uniformes detectados")
+            # Ajustado para ser mais realista com dados de mercado
+            if spread_std < 0.000001:  # Threshold mais restritivo
+                self.logger.warning("Spreads extremamente uniformes detectados")
                 return True
         
         # Verificar mudanças de preço muito uniformes
@@ -122,8 +125,9 @@ class ProductionDataValidator:
                 if change_std > 0:
                     # Coeficiente de variação muito baixo indica possível padrão sintético
                     cv = change_std / abs(price_changes.mean()) if price_changes.mean() != 0 else float('inf')
-                    if cv < 0.1:
-                        self.logger.warning("Mudanças de preço muito regulares detectadas")
+                    # Ajustado para ser mais realista - mercados podem ter períodos de baixa volatilidade
+                    if cv < 0.01:  # Threshold muito mais restritivo
+                        self.logger.warning("Mudanças de preço extremamente regulares detectadas")
                         return True
         
         return False

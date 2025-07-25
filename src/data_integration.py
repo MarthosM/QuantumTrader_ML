@@ -55,10 +55,32 @@ class DataIntegration:
             if trade_data.get('event_type') == 'historical_data_complete':
                 self.logger.info("🎉 Recebido sinal de conclusão de dados históricos")
                 
+                # Forçar processamento de todos os trades pendentes
+                self.logger.info(f"📊 Processando dados finais - Trades no buffer: {len(self.trades_buffer)}")
+                
+                # Finalizar candle pendente no data_loader
+                if hasattr(self.data_loader, 'finalize_pending_candle'):
+                    final_candle = self.data_loader.finalize_pending_candle()
+                    if final_candle is not None:
+                        self.logger.info("✅ Candle pendente do data_loader finalizado")
+                
+                # Processar todos os trades pendentes em candles
+                if self.trades_buffer:
+                    # Processar todos os períodos pendentes
+                    self._process_all_pending_candles()
+                
                 # Processar qualquer candle restante no buffer
                 with self.candles_buffer_lock:
                     if self.candles_buffer:
+                        self.logger.info(f"🔄 Processando {len(self.candles_buffer)} candles pendentes...")
                         self._flush_candles_buffer()
+                
+                # Sincronizar com data_loader
+                if hasattr(self, 'candles_1min') and not self.candles_1min.empty:
+                    if not hasattr(self.data_loader, 'candles_df'):
+                        self.data_loader.candles_df = pd.DataFrame()
+                    self.data_loader.candles_df = self.candles_1min.copy()
+                    self.logger.info(f"✅ Sincronizado {len(self.candles_1min)} candles com data_loader")
                 
                 # Fazer log do DataFrame criado
                 self.log_dataframe_summary()
@@ -75,17 +97,23 @@ class DataIntegration:
             if not self._validate_trade(trade_data):
                 return
             
-            # Criar/atualizar candle
+            # Para dados históricos, armazenar TODOS os trades no buffer
+            is_historical = trade_data.get('is_historical', False)
+            
+            if is_historical:
+                # Durante carregamento histórico, apenas armazenar no buffer
+                with self.buffer_lock:
+                    self.trades_buffer.append(trade_data)
+                # Não processar candles individualmente durante histórico
+                return
+            
+            # Para dados em tempo real, usar a lógica normal
             completed_candle = self.data_loader.create_or_update_candle(trade_data)
             
             # Se um candle foi completado
             if completed_candle is not None:
                 # Notificar sistema que novo candle está disponível
                 self._on_candle_completed(completed_candle)
-                
-                # Adicionar ao buffer histórico (opcional)
-                with self.buffer_lock:
-                    self.trades_buffer.append(trade_data)
                     
         except Exception as e:
             self.logger.error(f"Erro processando trade: {e}")
@@ -536,6 +564,92 @@ class DataIntegration:
             
         except Exception as e:
             self.logger.error(f"Erro solicitando dados de gap: {e}")
+    
+    def _process_all_pending_candles(self):
+        """Processa todos os trades pendentes em candles - MODO HISTÓRICO AGRESSIVO"""
+        try:
+            if not self.trades_buffer:
+                self.logger.info("🔍 Nenhum trade no buffer para processar")
+                return
+                
+            self.logger.info(f"🔄 Processando {len(self.trades_buffer)} trades pendentes...")
+            
+            # Agrupar trades por minuto
+            trades_by_minute = {}
+            
+            for trade in self.trades_buffer:
+                if 'timestamp' not in trade:
+                    continue
+                    
+                # Arredondar timestamp para o minuto
+                trade_time = trade['timestamp']
+                if isinstance(trade_time, str):
+                    trade_time = pd.to_datetime(trade_time)
+                elif not isinstance(trade_time, pd.Timestamp):
+                    trade_time = pd.Timestamp(trade_time)
+                
+                minute_key = trade_time.floor('1min')
+                
+                if minute_key not in trades_by_minute:
+                    trades_by_minute[minute_key] = []
+                trades_by_minute[minute_key].append(trade)
+            
+            # Criar candles para cada minuto
+            candles_created = 0
+            total_minutes = len(trades_by_minute)
+            
+            for minute_time, minute_trades in sorted(trades_by_minute.items()):
+                if minute_trades:
+                    # Criar candle diretamente
+                    candle_data = self._create_candle_from_trades(minute_time, minute_trades)
+                    if candle_data:
+                        # Adicionar ao buffer de candles
+                        candle_df = pd.DataFrame([candle_data], index=[minute_time])
+                        
+                        with self.candles_buffer_lock:
+                            self.candles_buffer.append(candle_df)
+                        
+                        candles_created += 1
+            
+            self.logger.info(f"✅ Criados {candles_created} candles de {total_minutes} minutos únicos")
+            
+            # Limpar buffer de trades após processar
+            self.trades_buffer.clear()
+            
+        except Exception as e:
+            self.logger.error(f"Erro processando candles pendentes: {e}")
+    
+    def _create_candle_from_trades(self, minute_time, trades):
+        """Cria um candle a partir de uma lista de trades"""
+        try:
+            if not trades:
+                return None
+                
+            prices = [float(t.get('price', 0)) for t in trades]
+            volumes = [float(t.get('volume', 0)) for t in trades]
+            
+            # Calcular buy/sell volume
+            buy_volume = sum(float(t.get('volume', 0)) for t in trades 
+                           if t.get('trade_type', 2) == 2)  # 2 = buy
+            sell_volume = sum(float(t.get('volume', 0)) for t in trades 
+                            if t.get('trade_type', 3) == 3)  # 3 = sell
+            
+            candle_data = {
+                'open': prices[0],
+                'high': max(prices),
+                'low': min(prices),
+                'close': prices[-1],
+                'volume': sum(volumes),
+                'trades': len(trades),
+                'buy_volume': buy_volume,
+                'sell_volume': sell_volume
+            }
+            
+            return candle_data
+            
+        except Exception as e:
+            self.logger.error(f"Erro criando candle: {e}")
+            return None
     
     def get_candles(self, interval: str = '1min') -> pd.DataFrame:
         """

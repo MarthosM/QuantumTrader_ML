@@ -281,12 +281,25 @@ class ProductionDataValidator:
                     }
                 
                 # ❌ TESTE 2: Muitos zeros (suspeito para dados reais)
-                zero_pct = (volume == 0).sum() / len(volume)
-                if zero_pct > 0.3:  # Mais de 30% zeros
-                    return {
-                        'failed': True,
-                        'reason': f'Muitos zeros em {vol_col} ({zero_pct:.1%}) - suspeito'
-                    }
+                # EXCEÇÃO: buy_volume e sell_volume podem ter muitos zeros legitimamente
+                if vol_col not in ['buy_volume', 'sell_volume']:
+                    zero_pct = (volume == 0).sum() / len(volume)
+                    if zero_pct > 0.3:  # Mais de 30% zeros
+                        return {
+                            'failed': True,
+                            'reason': f'Muitos zeros em {vol_col} ({zero_pct:.1%}) - suspeito'
+                        }
+                else:
+                    # Para buy/sell volume, só falhar se TODOS forem zero
+                    if (volume == 0).all():
+                        # Se é desenvolvimento, apenas avisar
+                        if self.production_mode:
+                            return {
+                                'failed': True,
+                                'reason': f'Todos os valores de {vol_col} são zero'
+                            }
+                        else:
+                            self.logger.warning(f"{vol_col} com todos zeros - aceitável em desenvolvimento")
                 
                 # ❌ TESTE 3: Volume muito uniforme
                 if len(volume) > 10:
