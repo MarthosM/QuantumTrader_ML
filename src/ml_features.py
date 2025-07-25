@@ -486,22 +486,86 @@ class MLFeatures:
             
             # Garman-Klass Volatility
             # Estimador ainda mais eficiente que usa OHLC
-            log_hc = np.log(candles['high'] / candles['close'])
-            log_ho = np.log(candles['high'] / candles['open'])
-            log_lc = np.log(candles['low'] / candles['close'])
-            log_lo = np.log(candles['low'] / candles['open'])
-            log_co = np.log(candles['close'] / candles['open'])
             
-            gk_estimator = (
-                0.5 * (log_hc * log_ho + log_lc * log_lo) - 
-                0.39 * (log_co ** 2)
-            )
+            # DEBUGGING: Verificar dados antes do cálculo
+            self.logger.info(f"[GK DEBUG] Verificando dados OHLC para {len(candles)} candles")
             
-            # Períodos múltiplos para Garman-Klass
-            for period in [10, 20]:
-                features[f'gk_vol_{period}'] = np.sqrt(
-                    gk_estimator.rolling(period).mean() * 252  # Anualizada
+            # Verificar se há preços zero ou negativos
+            ohlc_cols = ['open', 'high', 'low', 'close']
+            for col in ohlc_cols:
+                if col in candles.columns:
+                    zeros = (candles[col] <= 0).sum()
+                    nans = candles[col].isna().sum()
+                    if zeros > 0 or nans > 0:
+                        self.logger.warning(f"[GK DEBUG] {col}: {zeros} zeros, {nans} NaNs")
+            
+            # Verificar consistência OHLC
+            invalid_high = (candles['high'] < candles[['open', 'close']].max(axis=1)).sum()
+            invalid_low = (candles['low'] > candles[['open', 'close']].min(axis=1)).sum()
+            if invalid_high > 0 or invalid_low > 0:
+                self.logger.warning(f"[GK DEBUG] OHLC inválido: {invalid_high} highs, {invalid_low} lows")
+            
+            # Calcular logaritmos com verificação
+            try:
+                # Evitar divisão por zero e logaritmo de números negativos
+                high_close_ratio = candles['high'] / candles['close']
+                high_open_ratio = candles['high'] / candles['open']
+                low_close_ratio = candles['low'] / candles['close']
+                low_open_ratio = candles['low'] / candles['open']
+                close_open_ratio = candles['close'] / candles['open']
+                
+                # Verificar se há ratios inválidos
+                for name, ratio in [('high/close', high_close_ratio), ('high/open', high_open_ratio),
+                                   ('low/close', low_close_ratio), ('low/open', low_open_ratio),
+                                   ('close/open', close_open_ratio)]:
+                    invalid = (ratio <= 0).sum() + ratio.isna().sum()
+                    if invalid > 0:
+                        self.logger.error(f"[GK DEBUG] {name} ratio inválido: {invalid} casos")
+                
+                log_hc = np.log(high_close_ratio)
+                log_ho = np.log(high_open_ratio)
+                log_lc = np.log(low_close_ratio)
+                log_lo = np.log(low_open_ratio)
+                log_co = np.log(close_open_ratio)
+                
+                # Verificar NaNs nos logaritmos
+                log_series = [('log_hc', log_hc), ('log_ho', log_ho), ('log_lc', log_lc), 
+                             ('log_lo', log_lo), ('log_co', log_co)]
+                
+                for name, log_vals in log_series:
+                    nan_count = log_vals.isna().sum()
+                    if nan_count > 0:
+                        self.logger.error(f"[GK DEBUG] {name} tem {nan_count} NaNs de {len(log_vals)} valores")
+                
+                gk_estimator = (
+                    0.5 * (log_hc * log_ho + log_lc * log_lo) - 
+                    0.39 * (log_co ** 2)
                 )
+                
+                # Verificar GK estimator
+                gk_nans = gk_estimator.isna().sum()
+                self.logger.info(f"[GK DEBUG] GK estimator: {gk_nans} NaNs de {len(gk_estimator)} valores")
+                
+                # Períodos múltiplos para Garman-Klass
+                for period in [10, 20]:
+                    gk_rolled = gk_estimator.rolling(period).mean()
+                    gk_rolled_nans = gk_rolled.isna().sum()
+                    
+                    features[f'gk_vol_{period}'] = np.sqrt(gk_rolled * 252)  # Anualizada
+                    
+                    final_nans = features[f'gk_vol_{period}'].isna().sum()
+                    expected_nans = period - 1  # Primeiros (period-1) valores devem ser NaN
+                    
+                    self.logger.info(f"[GK DEBUG] gk_vol_{period}: {final_nans} NaNs (esperado: {expected_nans})")
+                    
+                    if final_nans > expected_nans:
+                        self.logger.error(f"[GK DEBUG] PROBLEMA: gk_vol_{period} tem {final_nans - expected_nans} NaNs extras!")
+                
+            except Exception as e:
+                self.logger.error(f"[GK DEBUG] Erro no cálculo Garman-Klass: {e}")
+                # Em caso de erro, criar features com NaN para não quebrar o sistema
+                for period in [10, 20]:
+                    features[f'gk_vol_{period}'] = pd.Series(np.nan, index=candles.index)
             
             # Features de volatilidade com lag (dependências temporais)
             if 'volatility_20' in features.columns:

@@ -1598,13 +1598,19 @@ class FeatureEngine:
         if len(high_nan) > 0:
             validation_errors.append(f"Features com >{nan_threshold*100:.0f}% NaN: {high_nan.index.tolist()}")
         
-        # 3. Verificar zeros suspeitos
+        # 3. Verificar zeros suspeitos (EXCLUIR FEATURES BINÁRIAS)
         for col in features_df.columns:
             if features_df[col].dtype in ['float64', 'int64']:
                 zero_ratio = (features_df[col] == 0).sum() / len(features_df)
                 
-                # Algumas features podem ter zeros válidos
-                if zero_ratio > 0.8 and not any(x in col for x in ['imbalance', 'position', 'flag']):
+                # Features binárias/indicadores DEVEM ter muitos zeros em condições normais
+                binary_indicators = ['oversold', 'overbought', 'squeeze', 'breakout', 'flag', 
+                                   'signal', 'cross', 'imbalance', 'position', 'trend_up', 'trend_down']
+                
+                # Pular validação para features binárias
+                is_binary = any(indicator in col.lower() for indicator in binary_indicators)
+                
+                if not is_binary and zero_ratio > 0.8:
                     validation_errors.append(f"Feature '{col}' tem {zero_ratio:.1%} zeros")
         
         # 4. Verificar variância
