@@ -32,7 +32,9 @@
 - **data_loader.py (linhas 230-241)**: Geração de dados sintéticos
 - **trading_system.py (linhas 274-289)**: Simulação de mercado
 - **model_manager.py (linha 1081)**: fillna(0) perigoso
-- **mock_regime_trainer.py**: Mock em produção
+
+### ✅ **COMPONENTES SEGUROS IMPLEMENTADOS**
+- **training/regime_analyzer.py**: RegimeAnalyzer integrado com detecção ADX + EMAs
 
 ### ✅ **VALIDAÇÃO OBRIGATÓRIA EM TODOS OS PONTOS**
 ```python
@@ -53,8 +55,9 @@ O fluxo de dados segue a seguinte sequência principal com **validações obriga
 2. 🛡️ VALIDAÇÃO → Carregamento de Dados → Históricos + Tempo Real
 3. 🛡️ VALIDAÇÃO → Cálculo de Indicadores → Processamento técnico
 4. 🛡️ VALIDAÇÃO → Cálculo de Features ML → Preparação para predição
-5. 🛡️ VALIDAÇÃO → Predição → Execução dos modelos
-6. 🛡️ VALIDAÇÃO → Resultado → Sinal de trading
+5. 🛡️ VALIDAÇÃO → Regime Analysis → ADX + EMAs detection
+6. 🛡️ VALIDAÇÃO → Predição → Execução dos modelos baseado em regime
+7. 🛡️ VALIDAÇÃO → Resultado → Sinal de trading
 ```
 
 **🚨 CRÍTICO**: Qualquer etapa que detecte dados dummy deve **PARAR O SISTEMA IMEDIATAMENTE**
@@ -455,13 +458,74 @@ ModelLoader.batch_predict_next_candles(
 
 ---
 
-## Etapa 6: Geração de Sinal de Trading
+## Etapa 6: Análise de Regime de Mercado
 
-### 6.1 Processamento da Predição
+### 6.1 RegimeAnalyzer - Detecção Automática
+
+```python
+from training.regime_analyzer import RegimeAnalyzer
+
+# Integração automática no MLCoordinator
+regime_analyzer = RegimeAnalyzer(logger)
+regime_info = regime_analyzer.analyze_market(unified_data)
+
+# Estrutura de retorno
+regime_info = {
+    'regime': 'trend_up' | 'trend_down' | 'range' | 'undefined',
+    'direction': -1 | 0 | 1,  # -1=bearish, 0=neutral, 1=bullish
+    'confidence': 0.0-0.8,     # Baseado na força do ADX
+    'strength': 'weak' | 'moderate' | 'strong',
+    'adx_value': float,        # Valor atual do ADX
+    'ema_alignment': 'bullish' | 'bearish' | 'neutral' | 'mixed',
+    'thresholds': {
+        'confidence': 0.60,    # Threshold por regime
+        'probability': 0.60,   # Threshold por regime  
+        'direction': 0.70,     # Threshold por regime
+        'magnitude': 0.003     # Threshold por regime
+    },
+    'risk_reward': 2.0,        # Ratio esperado por regime
+    'strategy': 'Follow trend' | 'Trade reversals' | 'HOLD'
+}
+```
+
+### 6.2 Classificação de Regimes
+
+#### Trend Up (ADX > 25 + EMA9 > EMA20 > EMA50)
+- **Confiança**: 0.5 + (ADX-25)/75 (máx 0.8)
+- **Estratégia**: Follow trend
+- **Risk/Reward**: 2:1
+- **Thresholds**: conf=0.60, prob=0.60, dir=0.70
+
+#### Trend Down (ADX > 25 + EMA9 < EMA20 < EMA50)  
+- **Confiança**: 0.5 + (ADX-25)/75 (máx 0.8)
+- **Estratégia**: Follow trend
+- **Risk/Reward**: 2:1
+- **Thresholds**: conf=0.60, prob=0.60, dir=0.70
+
+#### Range (ADX < 25)
+- **Confiança**: 0.6 (fixo)
+- **Estratégia**: Trade reversals at boundaries
+- **Risk/Reward**: 1.5:1
+- **Thresholds**: conf=0.60, prob=0.55, dir=0.50
+
+#### Undefined (ADX > 25 mas EMAs não alinhadas)
+- **Confiança**: 0.3
+- **Estratégia**: HOLD (no trading)
+- **Risk/Reward**: 1:1
+- **Thresholds**: conf=0.80, prob=0.80, dir=0.80 (conservador)
+
+---
+
+## Etapa 7: Geração de Sinal de Trading
+
+### 7.1 Processamento da Predição
 
 ```python
 MLIntegration._process_prediction(prediction_result: Dict)
-    ├── Análise de regime de mercado
+    ├── RegimeAnalyzer.analyze_market(unified_data) -> regime_info
+    │   ├── ADX calculation (threshold: 25)
+    │   ├── EMA alignment check (9, 20, 50)
+    │   └── Regime classification: trend_up/trend_down/range/undefined
     ├── trading_strategy.generate_signal(
     │       prediction=prediction_result,
     │       features_df=features_df,
@@ -472,7 +536,7 @@ MLIntegration._process_prediction(prediction_result: Dict)
     └── Armazena resultado em latest_signal
 ```
 
-### 6.2 Geração do Sinal
+### 7.2 Geração do Sinal
 
 ```python
 TradingStrategy.generate_signal(...) -> Dict[str, Any]

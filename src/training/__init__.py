@@ -12,6 +12,7 @@ from .ensemble_trainer import EnsembleTrainer
 from .validation_engine import ValidationEngine
 from .hyperopt_engine import HyperparameterOptimizer
 from .training_orchestrator import TrainingOrchestrator
+from .regime_analyzer import RegimeAnalyzer
 
 __all__ = [
     'TrainingDataLoader',
@@ -21,5 +22,6 @@ __all__ = [
     'EnsembleTrainer',
     'ValidationEngine',
     'HyperparameterOptimizer',
-    'TrainingOrchestrator'
+    'TrainingOrchestrator',
+    'RegimeAnalyzer'
 ]

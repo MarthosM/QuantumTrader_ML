@@ -372,18 +372,25 @@ class TradingSystem:
             self.feature_engine = FeatureEngine(list(all_features), allow_historical_data=allow_historical)
             self.logger.info(f"[ok] Feature engine configurado com {len(all_features)} features (histórico={'permitido' if allow_historical else 'bloqueado'})")
             
-            # 6. Configurar ML coordinator
-            self.logger.info("6. Configurando ML coordinator...")
+            # 6. Configurar regime analyzer
+            self.logger.info("6. Configurando regime analyzer...")
+            from training.regime_analyzer import RegimeAnalyzer
+            regime_analyzer = RegimeAnalyzer(self.logger)
+            self.logger.info("[ok] Regime analyzer configurado")
+            
+            # 7. Configurar ML coordinator
+            self.logger.info("7. Configurando ML coordinator...")
             pred_engine = PredictionEngine(self.model_manager)
             self.ml_coordinator = MLCoordinator(
                 self.model_manager,
                 self.feature_engine,
-                pred_engine
+                pred_engine,
+                regime_trainer=regime_analyzer
             )
             self.logger.info("[ok] ML coordinator configurado")
 
-            # 7. Configurar estratégia e risco
-            self.logger.info("7. Configurando estratégia e risco...")
+            # 8. Configurar estratégia e risco
+            self.logger.info("8. Configurando estratégia e risco...")
             signal_gen = SignalGenerator(self.config.get('strategy', {}))
             risk_mgr = RiskManager(self.config.get('risk', {}))
             self.strategy_engine = StrategyEngine(signal_gen, risk_mgr)
@@ -501,7 +508,6 @@ class TradingSystem:
                 self.execution_engine = None
                 self.execution_integration = None
 
-            # 11. Configurar callbacks
             # 11. Configurar callbacks
             self.logger.info("11. Configurando callbacks...")
             self._setup_callbacks()

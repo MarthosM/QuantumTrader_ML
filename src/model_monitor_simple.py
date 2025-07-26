@@ -12,8 +12,16 @@ class MLModelMonitor:
         self.feature_engine = feature_engine
         self.prediction_history = deque(maxlen=1000)
         
-    def monitor_prediction(self, prediction: Dict[str, Any]) -> Dict[str, Any]:
-        """Monitora uma predição individual"""
+    def monitor_prediction(self, features_or_prediction, prediction: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Monitora uma predição individual - Interface compatível com model_monitor.py"""
+        # Compatibilidade: aceitar tanto 1 quanto 2 argumentos
+        if prediction is None:
+            # Chamada com 1 argumento: monitor_prediction(prediction)
+            prediction = features_or_prediction
+        else:
+            # Chamada com 2 argumentos: monitor_prediction(features, prediction)
+            # features são ignoradas nesta versão simples
+            pass
         monitor_data = {
             'timestamp': datetime.now(),
             'prediction': prediction,

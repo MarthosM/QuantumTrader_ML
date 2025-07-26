@@ -42,6 +42,7 @@ isort src/  # Sort imports
 # Train complete ML system
 python -c "
 from src.training.training_orchestrator import TrainingOrchestrator
+from src.training.regime_analyzer import RegimeAnalyzer
 from datetime import datetime, timedelta
 
 config = {'data_path': 'data/', 'model_save_path': 'models/'}
@@ -53,6 +54,10 @@ results = orchestrator.train_complete_system(
     symbols=['WDO'],
     target_metrics={'accuracy': 0.55}
 )
+
+# Test regime detection
+regime_analyzer = RegimeAnalyzer()
+# regime_info = regime_analyzer.analyze_market(candles_df)
 "
 
 # Run backtest
@@ -85,10 +90,11 @@ ML Trading v2.0 is a production-grade algorithmic trading system that uses machi
 - **DataPipeline** (`data_pipeline.py`): Data processing pipeline
 
 #### ML Layer
-- **ModelManager** (`model_manager.py`): ML model loading and management
-- **FeatureEngine** (`feature_engine.py`): Feature calculation orchestration
-- **MLCoordinator** (`ml_coordinator.py`): Regime detection and strategy selection
-- **PredictionEngine** (`prediction_engine.py`): Model predictions execution
+- **ModelManager** (`model_manager.py`): ML model loading and management (real models only)
+- **FeatureEngine** (`feature_engine.py`): Feature calculation orchestration  
+- **RegimeAnalyzer** (`training/regime_analyzer.py`): Market regime detection (ADX + EMAs)
+- **MLCoordinator** (`ml_coordinator.py`): Regime-based strategy coordination
+- **PredictionEngine** (`prediction_engine.py`): **REAL predictions only** - no mock/synthetic data
 
 #### Trading Layer
 - **TradingSystem** (`trading_system.py`): Main system orchestrator
@@ -120,30 +126,54 @@ The system uses multiple threads for real-time processing:
 3. **Mock data is ONLY allowed** for isolated component testing during development
 4. **System automatically blocks** synthetic data in production environment
 
+### ML Predictions Policy (CRITICAL)
+1. **NEVER use mock predictions** in any environment
+2. **PredictionEngine MUST use real ModelManager** exclusively
+3. **System MUST fail with None** when models unavailable
+4. **NO fallback to random/synthetic predictions**
+
 ### Validation Points
 ```python
 # Every data entry point must validate:
 if os.getenv('TRADING_ENV') == 'production':
     if data_source.startswith('mock') or data_source.startswith('test'):
         raise ProductionDataError("Mock data detected in production!")
+
+# PredictionEngine validation:
+if not hasattr(self.model_manager, 'models') or not self.model_manager.models:
+    self.logger.error("❌ NENHUM MODELO DISPONÍVEL - Predição impossível")
+    return None  # NEVER return mock predictions
 ```
 
 ## 📊 Market Regime System
 
+### RegimeAnalyzer Implementation
+The system uses `training/regime_analyzer.py` for automatic regime detection:
+
+```python
+# RegimeAnalyzer automatically integrated in MLCoordinator
+from training.regime_analyzer import RegimeAnalyzer
+regime_analyzer = RegimeAnalyzer(logger)
+regime_info = regime_analyzer.analyze_market(unified_data)
+```
+
 ### Regime Detection (MANDATORY)
-The system MUST detect market regime before any prediction:
+The RegimeAnalyzer detects market regime before any prediction:
 
 1. **Trend Regime** (ADX > 25, aligned EMAs)
    - `trend_up`: EMA9 > EMA20 > EMA50
    - `trend_down`: EMA9 < EMA20 < EMA50
    - Strategy: Follow trend with 1:2 risk/reward
+   - Auto-calculates confidence based on ADX strength
 
-2. **Range Regime** (ADX < 25, price between support/resistance)
+2. **Range Regime** (ADX < 25, independent of EMAs)
    - Strategy: Trade reversals at boundaries
    - Risk/Reward: 1:1.5
+   - Fixed confidence: 0.6
 
-3. **Undefined Regime**
+3. **Undefined Regime** (ADX > 25 but EMAs not aligned)
    - Action: HOLD (no trading)
+   - Conservative thresholds: 0.8 confidence required
 
 ### Trading Thresholds by Regime
 ```python
@@ -260,6 +290,8 @@ logging.basicConfig(level=logging.DEBUG)
 - "Modelo X: Y features" - Model loading confirmation
 - "Regime detected:" - Market regime identification
 - "NaN quality score:" - Data quality metrics
+- "❌ NENHUM MODELO DISPONÍVEL" - **EXPECTED** when no models loaded
+- "🎯 Predição REAL gerada" - Confirms real ML predictions
 
 ### System Health Check
 ```python
@@ -274,8 +306,15 @@ print(f"Connection status: {system.connection.connected}")
 ## 🎯 Final Reminders
 
 1. **ALWAYS validate data source** before processing
-2. **NEVER skip regime detection** before predictions
-3. **FOLLOW threshold requirements** for each regime
-4. **TEST with real data** for production readiness
-5. **MONITOR system metrics** continuously
-6. **UPDATE documentation** after significant changes
+2. **NEVER use mock predictions** - system must fail appropriately
+3. **NEVER skip regime detection** before predictions
+4. **FOLLOW threshold requirements** for each regime
+5. **TEST with real data** for production readiness
+6. **MONITOR system metrics** continuously
+7. **UPDATE documentation** after significant changes
+
+### Expected System Failures (NORMAL)
+- **PredictionEngine returns None** when no models loaded
+- **System blocks synthetic data** in production
+- **Features validation fails** with insufficient data
+- These are **SAFETY FEATURES**, not bugs

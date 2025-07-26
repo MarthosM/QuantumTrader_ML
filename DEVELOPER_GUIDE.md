@@ -32,7 +32,8 @@ def main():
 - **TrainingOrchestrator**: Pipeline completo end-to-end
 - **Walk-Forward Validation**: validação temporal robusta
 - **Ensemble Automático**: 3 modelos otimizados automaticamente
-- **Relatórios Automáticos**: Métrica e análises detalhadosMENTADAS (2025-07-21)
+- **RegimeAnalyzer**: Detecção automática de regime (ADX + EMAs) integrada
+- **Relatórios Automáticos**: Métrica e análises detalhadas
 
 ### ✅ **Sistema de Backtest ML Integrado**
 - **ml_backtester.py**: Motor completo de backtest com ML integrado
