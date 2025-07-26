@@ -10,6 +10,10 @@ import traceback
 from typing import Dict, Optional, Callable, Any
 from ctypes import WINFUNCTYPE, WinDLL, c_int, c_wchar_p, c_double, c_uint, c_char, c_longlong, c_void_p
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+# Carregar variáveis de ambiente
+load_dotenv()
 
 # Import da estrutura TAssetID do enhanced_historical
 from ctypes import Structure
@@ -30,6 +34,11 @@ class ConnectionManager:
         self.connected = False
         self.callbacks = {}
         self.logger = logging.getLogger('ConnectionManager')
+        
+        # Detectar modo de desenvolvimento
+        self.dev_mode = os.getenv('DEV_MODE', 'false').lower() == 'true'
+        if self.dev_mode:
+            self.logger.info("🔧 MODO DESENVOLVIMENTO ATIVADO - Lógica adaptada para mercado fechado")
         
         # OTIMIZAÇÃO: Configurar logging para reduzir spam no terminal
         self._configure_optimal_logging()
@@ -867,8 +876,14 @@ class ConnectionManager:
                             self._notify_historical_data_complete()
                             return True
                         else:
-                            self.logger.info(f"⏳ Dados estáveis ({current_count} registros) mas ainda não chegaram até próximo da hora atual - continuando...")
-                            stable_count = 0  # Reset contador para continuar esperando
+                            # Em dev mode, ser mais tolerante com dados incompletos
+                            if self.dev_mode and stable_count >= 20:  # 10 segundos de estabilidade em dev mode
+                                self.logger.warning(f"⚠️ DEV MODE: Forçando conclusão após 10s de estabilidade com {current_count} registros")
+                                self._notify_historical_data_complete()
+                                return True
+                            else:
+                                self.logger.info(f"⏳ Dados estáveis ({current_count} registros) mas ainda não chegaram até próximo da hora atual - continuando...")
+                                stable_count = 0  # Reset contador para continuar esperando
                     
                     # PROTEÇÃO 2: Se passou 90 segundos sem dados, desistir
                     if no_data_count >= 180 and current_count == 0:  # 180 * 0.5s = 90s
@@ -918,18 +933,71 @@ class ConnectionManager:
                 
             current_time = datetime.now()
             
-            # Calcular diferença em minutos
-            time_diff = (current_time - self._last_historical_timestamp).total_seconds() / 60
+            # Em modo dev, considerar dados completos se chegaram até o fechamento do mercado
+            if self.dev_mode:
+                # Verificar se é fim de semana ou fora do horário de pregão
+                weekday = current_time.weekday()
+                hour = current_time.hour
+                
+                # Se é fim de semana (sábado=5, domingo=6)
+                if weekday >= 5:
+                    self.logger.info("🔧 DEV MODE: Fim de semana detectado")
+                    # Considerar completo se dados chegaram até sexta-feira
+                    friday_close = self._last_historical_timestamp.replace(hour=18, minute=0, second=0)
+                    if self._last_historical_timestamp >= friday_close:
+                        self.logger.info("✅ DEV MODE: Dados históricos completos até fechamento de sexta")
+                        return True
+                    else:
+                        time_to_close = (friday_close - self._last_historical_timestamp).total_seconds() / 60
+                        self.logger.info(f"⏳ DEV MODE: Dados ainda {time_to_close:.1f} min antes do fechamento")
+                        return time_to_close <= 30  # Tolerar 30 min antes do fechamento
+                
+                # Se é dia útil mas fora do horário de pregão (antes 9h ou depois 18h)
+                elif hour < 9 or hour >= 18:
+                    self.logger.info(f"🔧 DEV MODE: Fora do horário de pregão ({hour}h)")
+                    # Considerar completo se dados chegaram até o fechamento do dia
+                    if hour < 9:  # Antes da abertura
+                        # Verificar se temos dados até o fechamento do dia anterior
+                        yesterday_close = (current_time - timedelta(days=1)).replace(hour=18, minute=0, second=0)
+                        if self._last_historical_timestamp >= yesterday_close:
+                            self.logger.info("✅ DEV MODE: Dados completos até fechamento do dia anterior")
+                            return True
+                    else:  # Depois do fechamento
+                        today_close = current_time.replace(hour=18, minute=0, second=0)
+                        if self._last_historical_timestamp >= today_close:
+                            self.logger.info("✅ DEV MODE: Dados completos até fechamento de hoje")
+                            return True
+                        else:
+                            time_to_close = (today_close - self._last_historical_timestamp).total_seconds() / 60
+                            self.logger.info(f"⏳ DEV MODE: Dados ainda {time_to_close:.1f} min antes do fechamento")
+                            return time_to_close <= 30  # Tolerar 30 min antes do fechamento
+                
+                # Durante o pregão em dev mode, usar lógica normal mas com tolerância maior
+                else:
+                    time_diff = (current_time - self._last_historical_timestamp).total_seconds() / 60
+                    self.logger.info(f"📊 DEV MODE: Último dado: {self._last_historical_timestamp.strftime('%H:%M')} | Diff: {time_diff:.1f} min")
+                    # Em dev mode, tolerar até 30 minutos de atraso
+                    if time_diff <= 30:
+                        self.logger.info("✅ DEV MODE: Dados históricos considerados completos (tolerância 30 min)")
+                        return True
+                    else:
+                        self.logger.info(f"⏳ DEV MODE: Dados ainda defasados em {time_diff:.1f} minutos")
+                        return False
             
-            self.logger.info(f"📊 Último dado histórico: {self._last_historical_timestamp.strftime('%H:%M')} | Atual: {current_time.strftime('%H:%M')} | Diff: {time_diff:.1f} min")
-            
-            # Se diferença é menor que 10 minutos, considerar completo
-            if time_diff <= 10:
-                self.logger.info("✅ Dados históricos chegaram até próximo da hora atual")
-                return True
+            # Modo normal (produção)
             else:
-                self.logger.info(f"⏳ Dados ainda defasados em {time_diff:.1f} minutos - continuando carregamento...")
-                return False
+                # Calcular diferença em minutos
+                time_diff = (current_time - self._last_historical_timestamp).total_seconds() / 60
+                
+                self.logger.info(f"📊 Último dado histórico: {self._last_historical_timestamp.strftime('%H:%M')} | Atual: {current_time.strftime('%H:%M')} | Diff: {time_diff:.1f} min")
+                
+                # Se diferença é menor que 10 minutos, considerar completo
+                if time_diff <= 10:
+                    self.logger.info("✅ Dados históricos chegaram até próximo da hora atual")
+                    return True
+                else:
+                    self.logger.info(f"⏳ Dados ainda defasados em {time_diff:.1f} minutos - continuando carregamento...")
+                    return False
                 
         except Exception as e:
             self.logger.error(f"Erro verificando completude dos dados históricos: {e}")

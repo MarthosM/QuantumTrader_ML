@@ -476,7 +476,7 @@ class TradingSystem:
                     self.logger.info("Inicializando ExecutionIntegration...")
                     self.execution_integration = ExecutionIntegration(
                         connection_manager=self.connection,
-                        order_manager=order_mgr
+                        order_manager=self.order_manager
                     )
                     
                     if hasattr(self.execution_integration, 'initialize_execution_system'):

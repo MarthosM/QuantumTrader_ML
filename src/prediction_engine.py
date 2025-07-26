@@ -127,6 +127,30 @@ class PredictionEngine:
                 return model_result
             
             # Se é resultado de ensemble
+            if isinstance(model_result, dict) and 'ensemble' in model_result and model_result['ensemble']:
+                # Converter predição textual para numérica
+                prediction_map = {'sell': -1.0, 'hold': 0.0, 'buy': 1.0}
+                direction = prediction_map.get(model_result.get('prediction', 'hold'), 0.0)
+                
+                # Calcular magnitude baseado nas probabilidades
+                probs = model_result.get('probabilities', [0.33, 0.34, 0.33])
+                if len(probs) >= 3:
+                    # Magnitude = diferença entre probabilidade buy e sell
+                    magnitude = abs(probs[2] - probs[0])
+                else:
+                    magnitude = 0.001
+                
+                return {
+                    'direction': float(direction),
+                    'magnitude': float(magnitude),
+                    'confidence': float(model_result.get('confidence', 0.5)),
+                    'regime': model_result.get('market_regime', 'unknown'),
+                    'timestamp': datetime.now().isoformat(),
+                    'model_used': 'ensemble',
+                    'model_details': model_result
+                }
+            
+            # Se é resultado de ensemble (formato antigo)
             if isinstance(model_result, dict) and 'ensemble_prediction' in model_result:
                 ensemble_pred = model_result['ensemble_prediction']
                 return {
@@ -151,6 +175,64 @@ class PredictionEngine:
                         'timestamp': datetime.now().isoformat(),
                         'model_used': 'direct_array'
                     }
+            
+            # Se é resultado de múltiplos modelos (ensemble_predict)
+            if isinstance(model_result, dict):
+                # Verificar se todas as chaves são nomes de modelos
+                model_names = ['lightgbm', 'xgboost', 'random_forest', 'catboost', 'neural']
+                if any(any(model_name in key for model_name in model_names) for key in model_result.keys()):
+                    # É um dict de predições múltiplas - fazer votação simples
+                    self.logger.info(f"Processando {len(model_result)} predições de modelos")
+                    
+                    # Coletar predições
+                    directions = []
+                    confidences = []
+                    
+                    for model_name, pred in model_result.items():
+                        if isinstance(pred, dict) and 'predictions' in pred:
+                            # Assumir que predictions[0] é a classe predita (0=sell, 1=hold, 2=buy)
+                            pred_array = pred['predictions']
+                            if hasattr(pred_array, '__len__') and len(pred_array) > 0:
+                                pred_value = pred_array[0] if hasattr(pred_array, 'shape') else pred_array
+                                # Converter 0,1,2 para -1,0,1
+                                direction = float(pred_value) - 1.0
+                                directions.append(direction)
+                                
+                                # Usar probabilidades se disponíveis
+                                if 'probabilities' in pred and hasattr(pred['probabilities'], '__len__'):
+                                    probs = pred['probabilities']
+                                    if hasattr(probs, 'shape') and len(probs.shape) > 1:
+                                        # Pegar a probabilidade da classe predita
+                                        confidence = float(probs[0, int(pred_value)])
+                                    else:
+                                        confidence = 0.6
+                                    confidences.append(confidence)
+                                else:
+                                    confidences.append(0.6)
+                    
+                    if directions:
+                        # Calcular média ponderada pela confiança
+                        avg_direction = np.average(directions, weights=confidences) if confidences else np.mean(directions)
+                        avg_confidence = np.mean(confidences) if confidences else 0.5
+                        
+                        # Magnitude baseada na consistência das predições
+                        direction_std = np.std(directions)
+                        magnitude = max(0.001, abs(avg_direction) * (1 - direction_std))
+                        
+                        return {
+                            'direction': float(avg_direction),
+                            'magnitude': float(magnitude),
+                            'confidence': float(avg_confidence),
+                            'regime': 'unknown',
+                            'timestamp': datetime.now().isoformat(),
+                            'model_used': 'multi_model_vote',
+                            'model_count': len(directions),
+                            'model_details': model_result
+                        }
+                
+                # Se não é formato de múltiplos modelos, logar
+                self.logger.warning(f"Dict com formato não reconhecido. Keys: {list(model_result.keys())}")
+                self.logger.debug(f"Conteúdo: {model_result}")
             
             # Fallback: interpretar como predição simples
             self.logger.warning(f"Formato de resultado não reconhecido: {type(model_result)}")
@@ -191,6 +273,10 @@ class PredictionEngine:
         try:
             # Converter resultado base
             prediction = self._convert_model_result(model_result)
+            
+            if prediction is None:
+                self.logger.error("❌ Conversão do resultado do modelo falhou")
+                return None
             
             # Ajustar com informações de regime
             prediction.update({
