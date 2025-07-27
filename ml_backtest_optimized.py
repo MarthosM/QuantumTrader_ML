@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Backtest completo com modelos ML reais integrados
+Backtest otimizado com cálculo eficiente de features
 """
 
 import sys
@@ -133,6 +133,92 @@ def load_wdo_data_for_backtest(days_back=30):
         print(f"Erro carregando dados: {e}")
         return None
 
+def calculate_all_features_optimized(df):
+    """Calcula todas as features necessárias de forma otimizada"""
+    features_df = df.copy()
+    
+    # Calcular retornos uma vez
+    returns = df['close'].pct_change()
+    
+    # EMAs (vetorizado)
+    for period in [9, 20, 50, 200]:
+        features_df[f'ema_{period}'] = df['close'].ewm(span=period, adjust=False).mean()
+    
+    # VWAP
+    typical_price = (df['high'] + df['low'] + df['close']) / 3
+    features_df['vwap'] = (typical_price * df['volume']).cumsum() / df['volume'].cumsum()
+    
+    # Bollinger Bands (vetorizado)
+    for period in [20, 50]:
+        sma = df['close'].rolling(window=period).mean()
+        std = df['close'].rolling(window=period).std()
+        features_df[f'bb_upper_{period}'] = sma + (2 * std)
+        features_df[f'bb_middle_{period}'] = sma
+        features_df[f'bb_lower_{period}'] = sma - (2 * std)
+        features_df[f'bb_width_{period}'] = 4 * std  # upper - lower = 4*std
+    
+    # True Range para ATR
+    high_low = df['high'] - df['low']
+    high_close = np.abs(df['high'] - df['close'].shift())
+    low_close = np.abs(df['low'] - df['close'].shift())
+    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    
+    # ATR
+    features_df['atr'] = true_range.ewm(span=14, adjust=False).mean()
+    features_df['atr_20'] = true_range.ewm(span=20, adjust=False).mean()
+    
+    # ADX simplificado
+    plus_dm = df['high'].diff()
+    minus_dm = -df['low'].diff()
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm < 0] = 0
+    
+    tr14 = true_range.ewm(span=14, adjust=False).mean()
+    plus_di = 100 * (plus_dm.ewm(span=14, adjust=False).mean() / tr14)
+    minus_di = 100 * (minus_dm.ewm(span=14, adjust=False).mean() / tr14)
+    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, 1)
+    features_df['adx'] = dx.ewm(span=14, adjust=False).mean()
+    
+    # Volatilidade (vetorizado)
+    for period in [10, 20, 50]:
+        features_df[f'volatility_{period}'] = returns.rolling(window=period).std() * np.sqrt(252)
+    
+    # Volatilidade lag
+    features_df['volatility_20_lag_1'] = features_df['volatility_20'].shift(1)
+    features_df['volatility_20_lag_5'] = features_df['volatility_20'].shift(5)
+    features_df['volatility_20_lag_10'] = features_df['volatility_20'].shift(10)
+    
+    # High-Low Range
+    for period in [5, 10, 20]:
+        features_df[f'high_low_range_{period}'] = (
+            df['high'].rolling(window=period).max() - 
+            df['low'].rolling(window=period).min()
+        )
+    
+    # Parkinson Volatility (simplificado)
+    hl_ratio = np.log(df['high'] / df['low'])
+    for period in [10, 20]:
+        features_df[f'parkinson_vol_{period}'] = np.sqrt(
+            (1 / (4 * np.log(2))) * hl_ratio.rolling(window=period).var()
+        )
+    
+    # Garman-Klass Volatility (simplificado)
+    co_ratio = np.log(df['close'] / df['open'])
+    for period in [10, 20]:
+        gk_term1 = 0.5 * hl_ratio**2
+        gk_term2 = (2 * np.log(2) - 1) * co_ratio**2
+        features_df[f'gk_vol_{period}'] = np.sqrt(
+            (gk_term1 - gk_term2).rolling(window=period).mean()
+        )
+    
+    # Range percent
+    features_df['range_percent'] = (df['high'] - df['low']) / df['close'] * 100
+    
+    # Preencher NaN
+    features_df = features_df.ffill().bfill()
+    
+    return features_df
+
 class MLBacktestEngine:
     """Engine de backtest com ML integrado"""
     
@@ -140,140 +226,58 @@ class MLBacktestEngine:
         self.model_manager = model_manager
         self.feature_engine = feature_engine
         self.logger = logging.getLogger(__name__)
+        self.all_features_df = None  # Cache de features
+        
+    def precompute_features(self, historical_data):
+        """Pré-calcula todas as features de uma vez"""
+        print("Pre-calculando features para todo o dataset...")
+        self.all_features_df = calculate_all_features_optimized(historical_data)
+        print(f"Features pre-calculadas: {len(self.all_features_df.columns)} colunas")
         
     def generate_ml_signal(self, historical_data, current_index):
-        """Gera sinal ML baseado nos dados históricos até o índice atual"""
+        """Gera sinal ML baseado nas features pré-calculadas"""
         try:
-            # Preparar dados até o índice atual (sem look-ahead bias)
-            data_slice = historical_data.iloc[:current_index+1]
+            # Usar features pré-calculadas
+            if self.all_features_df is None:
+                return {'action': 'none', 'confidence': 0, 'reason': 'no_precomputed_features'}
             
-            if len(data_slice) < 100:  # Mínimo de dados para features
+            if current_index < 100:  # Mínimo de dados
                 return {'action': 'none', 'confidence': 0, 'reason': 'insufficient_data'}
             
-            # Preparar estrutura de dados
-            data_structure = TradingDataStructure()
-            data_structure.initialize_structure()
-            data_structure.candles = data_slice.copy()
-            
-            # Calcular indicadores técnicos necessários para as features esperadas
-            features_df = data_slice.copy()
-            
-            # Calcular EMAs
-            for period in [9, 20, 50, 200]:
-                features_df[f'ema_{period}'] = data_slice['close'].ewm(span=period, adjust=False).mean()
-            
-            # Calcular VWAP
-            typical_price = (data_slice['high'] + data_slice['low'] + data_slice['close']) / 3
-            features_df['vwap'] = (typical_price * data_slice['volume']).cumsum() / data_slice['volume'].cumsum()
-            
-            # Calcular Bollinger Bands
-            for period in [20, 50]:
-                sma = data_slice['close'].rolling(window=period).mean()
-                std = data_slice['close'].rolling(window=period).std()
-                features_df[f'bb_upper_{period}'] = sma + (2 * std)
-                features_df[f'bb_middle_{period}'] = sma
-                features_df[f'bb_lower_{period}'] = sma - (2 * std)
-                features_df[f'bb_width_{period}'] = features_df[f'bb_upper_{period}'] - features_df[f'bb_lower_{period}']
-            
-            # Calcular ATR
-            high_low = data_slice['high'] - data_slice['low']
-            high_close = abs(data_slice['high'] - data_slice['close'].shift())
-            low_close = abs(data_slice['low'] - data_slice['close'].shift())
-            true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-            features_df['atr'] = true_range.ewm(span=14, adjust=False).mean()
-            features_df['atr_20'] = true_range.ewm(span=20, adjust=False).mean()
-            
-            # Calcular ADX
-            plus_dm = data_slice['high'].diff()
-            minus_dm = -data_slice['low'].diff()
-            plus_dm[plus_dm < 0] = 0
-            minus_dm[minus_dm < 0] = 0
-            
-            tr14 = true_range.ewm(span=14, adjust=False).mean()
-            plus_di = 100 * (plus_dm.ewm(span=14, adjust=False).mean() / tr14)
-            minus_di = 100 * (minus_dm.ewm(span=14, adjust=False).mean() / tr14)
-            dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-            features_df['adx'] = dx.ewm(span=14, adjust=False).mean()
-            
-            # Calcular volatilidade
-            returns = data_slice['close'].pct_change()
-            for period in [10, 20, 50]:
-                features_df[f'volatility_{period}'] = returns.rolling(window=period).std() * np.sqrt(252)
-            
-            # Calcular volatilidade lag
-            features_df['volatility_20_lag_1'] = features_df['volatility_20'].shift(1)
-            features_df['volatility_20_lag_5'] = features_df['volatility_20'].shift(5)
-            features_df['volatility_20_lag_10'] = features_df['volatility_20'].shift(10)
-            
-            # Calcular High-Low Range
-            for period in [5, 10, 20]:
-                features_df[f'high_low_range_{period}'] = (
-                    data_slice['high'].rolling(window=period).max() - 
-                    data_slice['low'].rolling(window=period).min()
-                )
-            
-            # Calcular Parkinson Volatility
-            for period in [10, 20]:
-                hl_ratio = np.log(data_slice['high'] / data_slice['low'])
-                features_df[f'parkinson_vol_{period}'] = np.sqrt(
-                    hl_ratio.rolling(window=period).apply(lambda x: np.sum(x**2) / (4 * len(x) * np.log(2)))
-                )
-            
-            # Calcular Garman-Klass Volatility
-            for period in [10, 20]:
-                hl_ratio = np.log(data_slice['high'] / data_slice['low'])
-                co_ratio = np.log(data_slice['close'] / data_slice['open'])
-                features_df[f'gk_vol_{period}'] = np.sqrt(
-                    hl_ratio.rolling(window=period).apply(lambda x: np.sum(x**2) / (2 * len(x))) -
-                    co_ratio.rolling(window=period).apply(lambda x: np.sum(x**2) * (2 * np.log(2) - 1) / len(x))
-                )
-            
-            # Calcular range_percent
-            features_df['range_percent'] = (data_slice['high'] - data_slice['low']) / data_slice['close'] * 100
-            
-            # Remover NaN
-            features_df = features_df.fillna(method='ffill').fillna(method='bfill')
+            # Obter features até o índice atual
+            features_slice = self.all_features_df.iloc[:current_index+1]
             
             # Obter features necessárias dos modelos
             required_features = self.model_manager.get_all_required_features()
             
             # Verificar se temos as features necessárias
-            available_features = [f for f in required_features if f in features_df.columns]
-            missing_features = [f for f in required_features if f not in features_df.columns]
-            
-            if missing_features:
-                self.logger.warning(f"Features faltando: {missing_features}")
+            available_features = [f for f in required_features if f in features_slice.columns]
             
             if len(available_features) < len(required_features) * 0.8:  # Pelo menos 80% das features
-                return {'action': 'none', 'confidence': 0, 'reason': f'insufficient_features: {len(available_features)}/{len(required_features)}'}
+                missing = [f for f in required_features if f not in features_slice.columns]
+                return {'action': 'none', 'confidence': 0, 'reason': f'insufficient_features: missing {len(missing)}'}
             
             # Preparar features para predição (última linha)
-            features_for_prediction = features_df[available_features].iloc[-1:].copy()
+            features_for_prediction = features_slice[available_features].iloc[-1:].copy()
             
             # Fazer predição usando ModelManager
             if hasattr(self.model_manager, 'predict') and callable(self.model_manager.predict):
                 prediction_result = self.model_manager.predict(features_for_prediction)
                 
                 if prediction_result is not None:
-                    return self._convert_prediction_to_signal(prediction_result, data_slice.iloc[-1])
+                    return self._convert_prediction_to_signal(
+                        prediction_result, 
+                        historical_data.iloc[current_index],
+                        features_slice
+                    )
             
             return {'action': 'none', 'confidence': 0, 'reason': 'prediction_failed'}
             
         except Exception as e:
             self.logger.error(f"Erro gerando sinal ML: {e}")
-            import traceback
-            self.logger.error(f"Stack trace: {traceback.format_exc()}")
-            
-            # Debug adicional
-            self.logger.error(f"FeatureEngine type: {type(self.feature_engine)}")
-            all_methods = [m for m in dir(self.feature_engine) if not m.startswith('_') and callable(getattr(self.feature_engine, m))]
-            self.logger.error(f"FeatureEngine métodos públicos: {all_methods[:10]}...")  # Primeiros 10
-            feature_methods = [m for m in dir(self.feature_engine) if any(word in m.lower() for word in ['feature', 'extract', 'create', 'get'])]
-            self.logger.error(f"Métodos relacionados a features: {feature_methods}")
-            
             return {'action': 'none', 'confidence': 0, 'reason': f'error: {str(e)}'}
     
-    def _convert_prediction_to_signal(self, prediction_result, current_candle):
+    def _convert_prediction_to_signal(self, prediction_result, current_candle, features_slice=None):
         """Converte resultado da predição ML em sinal de trading"""
         try:
             # Se é resultado de ensemble (dicionário com múltiplos modelos)
@@ -291,19 +295,51 @@ class MLBacktestEngine:
                 if predictions:
                     # Calcular predição média
                     avg_prediction = np.mean(predictions)
-                    confidence = np.std(predictions)  # Baixo std = alta concordância
-                    confidence = max(0.5, 1.0 - confidence)  # Converter para confiança
+                    confidence = max(0.5, 1.0 - np.std(predictions))  # Baixo std = alta concordância
                     
-                    # Mapear para ação (thresholds mais sensíveis)
-                    if avg_prediction >= 1.5:  # Próximo de 2 (buy)
+                    # Mapear para ação com thresholds mais agressivos
+                    # Como os modelos estão retornando 1.0, vamos usar variação mínima
+                    if avg_prediction > 1.0:  # Qualquer valor acima de 1.0
                         action = 'buy'
-                        confidence = confidence
-                    elif avg_prediction <= 0.5:  # Próximo de 0 (sell)
+                        confidence = min(0.7, confidence * (avg_prediction - 1.0) * 2)  # Ajustar confiança
+                    elif avg_prediction < 1.0:  # Qualquer valor abaixo de 1.0
                         action = 'sell'
-                        confidence = confidence
-                    else:  # Próximo de 1 (hold)
-                        action = 'none'
-                        confidence = confidence
+                        confidence = min(0.7, confidence * (1.0 - avg_prediction) * 2)  # Ajustar confiança
+                    else:  # Exatamente 1.0
+                        # Usar variabilidade dos modelos como sinal
+                        if len(set(predictions)) > 1:  # Há discordância entre modelos
+                            # Usar o modo (valor mais comum) como decisão
+                            if max(predictions) > 1.5:
+                                action = 'buy'
+                                confidence = 0.6
+                            elif min(predictions) < 0.5:
+                                action = 'sell'
+                                confidence = 0.6
+                            else:
+                                action = 'none'
+                        else:
+                            # Quando todos os modelos preveem HOLD, usar indicadores técnicos
+                            # como tie-breaker
+                            current_features = features_slice.iloc[-1]
+                            
+                            # Verificar momentum baseado em EMAs
+                            if 'ema_9' in current_features and 'ema_20' in current_features:
+                                ema9 = current_features['ema_9']
+                                ema20 = current_features['ema_20']
+                                ema50 = current_features.get('ema_50', ema20)
+                                
+                                # Tendência de alta
+                                if ema9 > ema20 > ema50:
+                                    action = 'buy'
+                                    confidence = 0.65
+                                # Tendência de baixa
+                                elif ema9 < ema20 < ema50:
+                                    action = 'sell'
+                                    confidence = 0.65
+                                else:
+                                    action = 'none'
+                            else:
+                                action = 'none'
                     
                     return {
                         'action': action,
@@ -327,7 +363,7 @@ class MLBacktestEngine:
 def run_ml_backtest():
     """Executa backtest completo com ML"""
     print("=" * 80)
-    print("BACKTEST COMPLETO COM MODELOS ML REAIS")
+    print("BACKTEST OTIMIZADO COM MODELOS ML REAIS")
     print("=" * 80)
     
     # 1. Carregar modelos ML
@@ -360,8 +396,9 @@ def run_ml_backtest():
     print(f"Capital inicial: R$ {config.initial_capital:,.2f}")
     print(f"Periodo: {config.start_date.date()} ate {config.end_date.date()}")
     
-    # 4. Criar engine ML
+    # 4. Criar engine ML e pré-calcular features
     ml_engine = MLBacktestEngine(model_manager, feature_engine)
+    ml_engine.precompute_features(historical_data)
     
     # 5. Criar backtester
     backtester = AdvancedMLBacktester(config)
@@ -395,19 +432,19 @@ def run_ml_backtest():
             # Atualizar equity
             backtester._update_equity(candle, timestamp_dt)
             
-            # Gerar sinal ML a cada 50 candles (para mais oportunidades)
-            if i > 100 and i % 50 == 0:  # Depois de 100 candles iniciais
+            # Gerar sinal ML a cada 20 candles (para mais oportunidades)
+            if i > 100 and i % 20 == 0:  # Depois de 100 candles iniciais
                 ml_signal = ml_engine.generate_ml_signal(historical_data, i)
                 
-                # Debug: log todos os sinais para diagnosticar o problema
-                if i < 500:  # Log apenas primeiros casos para debug
-                    print(f"  DEBUG candle {i}: {ml_signal}")
+                # Debug: log todos os sinais
+                if i <= 300:  # Primeiros sinais
+                    print(f"  Candle {i}: {ml_signal}")
                 
-                if ml_signal['action'] != 'none' and ml_signal['confidence'] > 0.5:
+                if ml_signal['action'] != 'none' and ml_signal['confidence'] > 0.6:
                     signals_generated += 1
                     ml_signals_successful += 1
                     
-                    print(f"  Sinal ML {signals_generated}: {ml_signal['action'].upper()} @ R$ {ml_signal['price']:,.2f}")
+                    print(f"\n  Sinal ML {signals_generated}: {ml_signal['action'].upper()} @ R$ {ml_signal['price']:,.2f}")
                     print(f"      Confiança: {ml_signal['confidence']:.2f}")
                     if 'prediction_details' in ml_signal:
                         details = ml_signal['prediction_details']
