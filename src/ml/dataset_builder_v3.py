@@ -140,66 +140,59 @@ class DatasetBuilderV3:
     
     def _collect_real_data(self, ticker: str, start_date: datetime, 
                           end_date: datetime, timeframe: str) -> Dict:
-        """Coleta dados reais usando RealDataCollector"""
+        """Coleta dados reais usando ProfitDLL"""
         
         try:
-            # Importar e usar RealDataCollector
-            import sys
-            import os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-            from data.real_data_collector import RealDataCollector
+            # Importar coletor real
+            from ..data.profitdll_real_collector import ProfitDLLRealCollector
             
-            collector = RealDataCollector()
+            self.logger.info("Inicializando ProfitDLL Real Collector...")
+            collector = ProfitDLLRealCollector()
             
-            # Para teste, vamos simular dados
-            # Em produção, usar: data = collector.collect_historical_data(ticker, start_date, end_date)
+            # Inicializar
+            if not collector.initialize():
+                self.logger.error("Falha ao inicializar ProfitDLL")
+                raise Exception("ProfitDLL não inicializada")
             
-            # Simulação de dados para teste
-            self.logger.warning("Usando dados simulados para teste - substituir por coleta real em produção")
+            # Conectar
+            self.logger.info("Conectando ao ProfitChart...")
+            if not collector.connect_and_login():
+                self.logger.error("Falha ao conectar ao ProfitChart")
+                raise Exception("Conexão com ProfitChart falhou")
             
-            dates = pd.date_range(start_date, end_date, freq=timeframe)
+            # Coletar dados históricos
+            self.logger.info("Coletando dados históricos reais...")
+            self.logger.info(f"Ticker: {ticker}, Período: {start_date} até {end_date}")
             
-            # Simular candles
-            candles = pd.DataFrame({
-                'open': 5900 + np.random.randn(len(dates)).cumsum() * 0.5,
-                'high': 5905 + np.random.randn(len(dates)).cumsum() * 0.5,
-                'low': 5895 + np.random.randn(len(dates)).cumsum() * 0.5,
-                'close': 5900 + np.random.randn(len(dates)).cumsum() * 0.5,
-                'volume': np.random.randint(1000000, 5000000, len(dates)),
-                'bid': 5899 + np.random.randn(len(dates)).cumsum() * 0.5,
-                'ask': 5901 + np.random.randn(len(dates)).cumsum() * 0.5
-            }, index=dates)
+            data = collector.collect_historical_data(ticker, start_date, end_date)
             
-            # Ajustar OHLC
-            candles['high'] = candles[['open', 'close', 'high']].max(axis=1)
-            candles['low'] = candles[['open', 'close', 'low']].min(axis=1)
+            # Desconectar
+            collector.disconnect()
             
-            # Simular microestrutura
-            microstructure = pd.DataFrame({
-                'buy_volume': candles['volume'] * np.random.uniform(0.4, 0.6, len(dates)),
-                'sell_volume': candles['volume'] * np.random.uniform(0.4, 0.6, len(dates)),
-                'volume_imbalance': np.random.randn(len(dates)) * 500000,
-                'trade_imbalance': np.random.randn(len(dates)) * 50,
-                'buy_pressure': np.random.uniform(0.4, 0.6, len(dates)),
-                'avg_trade_size': np.random.randint(10000, 50000, len(dates)),
-                'buy_trades': np.random.randint(50, 150, len(dates)),
-                'sell_trades': np.random.randint(50, 150, len(dates))
-            }, index=dates)
+            if not data or 'candles' not in data:
+                self.logger.error("Nenhum dado coletado do ProfitChart")
+                raise Exception("Sem dados disponíveis")
             
+            # Retornar no formato esperado
             return {
-                'candles': candles,
-                'microstructure': microstructure
+                'candles': data.get('candles', pd.DataFrame()),
+                'microstructure': data.get('microstructure', pd.DataFrame()),
+                'trades': data.get('trades', pd.DataFrame())
             }
             
         except Exception as e:
-            self.logger.error(f"Erro coletando dados: {e}")
+            self.logger.error(f"Erro coletando dados reais: {e}")
+            self.logger.error("Verifique se:")
+            self.logger.error("- ProfitChart está aberto e logado")
+            self.logger.error("- Credenciais estão configuradas nas variáveis de ambiente")
+            self.logger.error("- Ticker e período estão corretos")
             return {}
     
     def _calculate_features(self, raw_data: Dict) -> pd.DataFrame:
         """Calcula features usando MLFeaturesV3"""
         
         try:
-            from features.ml_features_v3 import MLFeaturesV3
+            from ..features.ml_features_v3 import MLFeaturesV3
             
             calculator = MLFeaturesV3()
             

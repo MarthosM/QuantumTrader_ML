@@ -149,6 +149,66 @@ class TradingDataStructure:
             self.logger.error(f"Erro atualizando microestrutura: {e}")
             return False
     
+    def update_orderbook(self, new_orderbook: pd.DataFrame) -> bool:
+        """Atualiza DataFrame de orderbook"""
+        try:
+            if new_orderbook.empty:
+                return False
+                
+            if self.orderbook.empty:
+                self.orderbook = new_orderbook.copy()
+            else:
+                # Concatenar e remover duplicatas
+                self.orderbook = pd.concat([self.orderbook, new_orderbook])
+                self.orderbook = self.orderbook[~self.orderbook.index.duplicated(keep='last')]
+                self.orderbook = self.orderbook.sort_index()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Erro atualizando orderbook: {e}")
+            return False
+    
+    def update_indicators(self, new_indicators: pd.DataFrame) -> bool:
+        """Atualiza DataFrame de indicadores"""
+        try:
+            if new_indicators.empty:
+                return False
+                
+            if self.indicators.empty:
+                self.indicators = new_indicators.copy()
+            else:
+                # Concatenar e remover duplicatas
+                self.indicators = pd.concat([self.indicators, new_indicators])
+                self.indicators = self.indicators[~self.indicators.index.duplicated(keep='last')]
+                self.indicators = self.indicators.sort_index()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Erro atualizando indicadores: {e}")
+            return False
+    
+    def update_features(self, new_features: pd.DataFrame) -> bool:
+        """Atualiza DataFrame de features"""
+        try:
+            if new_features.empty:
+                return False
+                
+            if self.features.empty:
+                self.features = new_features.copy()
+            else:
+                # Concatenar e remover duplicatas
+                self.features = pd.concat([self.features, new_features])
+                self.features = self.features[~self.features.index.duplicated(keep='last')]
+                self.features = self.features.sort_index()
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Erro atualizando features: {e}")
+            return False
+    
     def _update_metadata(self):
         """Atualiza metadados e cache"""
         if not self.candles.empty:
