@@ -318,3 +318,31 @@ print(f"Connection status: {system.connection.connected}")
 - **System blocks synthetic data** in production
 - **Features validation fails** with insufficient data
 - These are **SAFETY FEATURES**, not bugs
+
+## 🌟 Filosofia Simple Made Easy
+
+Este sistema segue os princípios de Rich Hickey:
+
+### Simple = Desemaranhado
+- Cada componente tem UMA responsabilidade
+- Dados fluem em UMA direção
+- Features são funções puras
+- Sem fallbacks mágicos
+
+### Easy ≠ Simple
+- Não usamos atalhos que criam dívida técnica
+- Preferimos APIs explícitas vs. "convenientes"
+- Escolhemos clareza sobre brevidade
+
+### Regras de Ouro
+1. **Compose, Don't Complect**: Use composição, não entrelaçamento
+2. **Values over State**: Dados imutáveis quando possível
+3. **Pure Functions**: Features sem side effects
+4. **Explicit over Implicit**: Sem mágica, sem surpresas
+5. **One Thing Well**: Cada módulo faz uma coisa bem
+
+### Aplicação Prática
+- DataProvider: APENAS fornece dados
+- FeatureEngine: APENAS calcula features
+- ModelManager: APENAS gerencia modelos
+- Nenhum componente "ajuda" outro com fallbacks

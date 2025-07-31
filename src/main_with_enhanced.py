@@ -1,5 +1,5 @@
 """
-Ponto de entrada principal do sistema v2.0
+Ponto de entrada principal do sistema v2.0 com suporte Enhanced
 """
 
 import os
@@ -10,11 +10,13 @@ from dotenv import load_dotenv
 # Adicionar src ao path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Importar com detecção automática de enhanced
+# Tentar importar sistema enhanced, fallback para normal
 try:
-    from auto_enhanced_system import TradingSystem
+    from trading_system_enhanced import TradingSystemEnhanced as TradingSystem
+    ENHANCED_AVAILABLE = True
 except ImportError:
     from trading_system import TradingSystem
+    ENHANCED_AVAILABLE = False
 
 
 def load_config():
@@ -26,7 +28,7 @@ def load_config():
         # Diretório pai do script
         os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'),
         # Caminho absoluto conhecido
-        r'C:\Users\marth\OneDrive\Programacao\Python\Projetos\ML_Tradingv2.0\.env'
+        r'C:\Users\marth\OneDrive\Programacao\Python\Projetos\QuantumTrader_ML\.env'
     ]
     
     env_loaded = False
@@ -59,7 +61,7 @@ def load_config():
             'max_positions': int(os.getenv('MAX_POSITIONS', '1')),
             'risk_per_trade': float(os.getenv('RISK_PER_TRADE', '0.02'))
         },
-        'use_gui': os.getenv('USE_GUI', 'false').lower() == 'true'  # Desabilitado para debugging
+        'use_gui': os.getenv('USE_GUI', 'true').lower() == 'true'  # Habilitado por padrão
     }
     
     return config
@@ -76,6 +78,9 @@ def main():
     
     logger = logging.getLogger('Main')
     logger.info("Iniciando Sistema de Trading v2.0")
+    
+    if ENHANCED_AVAILABLE:
+        logger.info("Sistema Enhanced detectado e disponível")
     
     try:
         # Carregar configuração
