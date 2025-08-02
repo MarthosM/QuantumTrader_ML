@@ -17,7 +17,7 @@ import pandas as pd
 from ctypes import c_double
 
 # Importar componentes desenvolvidos nas etapas anteriores
-from connection_manager_v4 import ConnectionManagerV4 as ConnectionManager
+from connection_manager import ConnectionManager
 from model_manager import ModelManager
 from data_structure import TradingDataStructure
 from data_pipeline import DataPipeline
@@ -36,7 +36,7 @@ from data_integration import DataIntegration
 
 # Importar sistema de execução de ordens
 try:
-    from order_manager_v4 import OrderExecutionManagerV4 as OrderExecutionManager
+    from order_manager import OrderExecutionManager
     from execution_engine import SimpleExecutionEngine
     from execution_integration_simple import ExecutionIntegration
     ORDER_EXECUTION_AVAILABLE = True
@@ -79,11 +79,6 @@ from performance_analyzer_simple import PerformanceAnalyzer
 # Integração ML Flow
 import sys
 import os
-from profit_dll_structures import (
-    OrderSide, OrderType, NResult,
-    create_account_identifier, create_send_order
-)
-
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
@@ -1715,14 +1710,14 @@ class TradingSystem:
                         else:
                             # Ordem limite
                             if side == 1:  # Compra
-                                result = dll.SendOrder(
+                                result = dll.SendBuyOrder(
                                     self.ticker.encode('utf-8'),
                                     "BOVESPA".encode('utf-8'),
                                     quantity,
                                     c_double(price)
                                 )
                             else:  # Venda
-                                result = dll.SendOrder(
+                                result = dll.SendSellOrder(
                                     self.ticker.encode('utf-8'),
                                     "BOVESPA".encode('utf-8'),
                                     quantity,

@@ -251,7 +251,7 @@ class HistoricalDataCollector:
                                end_date: datetime,
                                data_types: List[str]) -> Dict:
         """Coleta dados do ProfitDLL"""
-        from connection_manager_v4 import ConnectionManagerV4 as ConnectionManager  # Import local
+        from connection_manager import ConnectionManager  # Import local
         
         conn = ConnectionManager(self.config)
         if not conn.connect():

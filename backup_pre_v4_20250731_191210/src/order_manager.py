@@ -6,11 +6,6 @@ from enum import Enum
 import threading
 import queue
 from dataclasses import dataclass
-from profit_dll_structures import (
-    OrderSide, OrderType, NResult,
-    create_account_identifier, create_send_order
-)
-
 
 class OrderType(Enum):
     """Tipos de ordem suportados"""
@@ -271,7 +266,7 @@ class OrderExecutionManager:
         dll = self.connection_manager.dll
         
         if order.side == OrderSide.BUY:
-            return dll.SendOrder(
+            return dll.SendMarketBuyOrder(
                 order.account_id,
                 order.broker_id,
                 order.password,
@@ -280,7 +275,7 @@ class OrderExecutionManager:
                 order.quantity
             )
         else:
-            return dll.SendOrder(
+            return dll.SendMarketSellOrder(
                 order.account_id,
                 order.broker_id,
                 order.password,
@@ -294,7 +289,7 @@ class OrderExecutionManager:
         dll = self.connection_manager.dll
         
         if order.side == OrderSide.BUY:
-            return dll.SendOrder(
+            return dll.SendBuyOrder(
                 order.account_id,
                 order.broker_id,
                 order.password,
@@ -304,7 +299,7 @@ class OrderExecutionManager:
                 order.quantity
             )
         else:
-            return dll.SendOrder(
+            return dll.SendSellOrder(
                 order.account_id,
                 order.broker_id,
                 order.password,
@@ -350,7 +345,7 @@ class OrderExecutionManager:
                 return False
             
             # Cancelar via DLL
-            result = self.connection_manager.dll.SendCancelOrderV2(
+            result = self.connection_manager.dll.SendCancelOrder(
                 order.account_id,
                 order.broker_id,
                 order.cl_ord_id,
@@ -437,7 +432,7 @@ class OrderExecutionManager:
             exchange = self._get_exchange_for_symbol(symbol)
             
             # GetPosition retorna um ponteiro para estrutura
-            position_ptr = self.connection_manager.dll.GetPositionV2(
+            position_ptr = self.connection_manager.dll.GetPosition(
                 self.account_info['account_id'],
                 self.account_info['broker_id'],
                 symbol,

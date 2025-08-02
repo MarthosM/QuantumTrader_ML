@@ -1,4 +1,9 @@
-# src/execution/order_manager.py
+# src/execution/order_manager_v4.py
+"""
+Gerenciador de Ordens compatível com ProfitDLL v4.0.0.30
+Usa as novas estruturas e funções não-depreciadas
+"""
+
 import logging
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
@@ -6,11 +11,18 @@ from enum import Enum
 import threading
 import queue
 from dataclasses import dataclass
-from profit_dll_structures import (
-    OrderSide, OrderType, NResult,
-    create_account_identifier, create_send_order
-)
+import uuid
+from ctypes import byref, c_wchar_p, c_int, c_double, POINTER
 
+# Importar estruturas da API v4.0.0.30
+from profit_dll_structures import (
+    TConnectorSendOrder, TConnectorChangeOrder, TConnectorCancelOrder,
+    TConnectorCancelOrders, TConnectorCancelAllOrders, TConnectorAccountIdentifier,
+    TConnectorTradingAccountPosition, TConnectorOrderOut,
+    OrderSide as DLLOrderSide, OrderType as DLLOrderType, 
+    OrderStatus as DLLOrderStatus, NResult,
+    create_account_identifier, create_send_order, create_cancel_order
+)
 
 class OrderType(Enum):
     """Tipos de ordem suportados"""
@@ -59,9 +71,11 @@ class Order:
             self.timestamp = datetime.now()
         if self.remaining_qty == 0:
             self.remaining_qty = self.quantity
+        if not self.cl_ord_id:
+            self.cl_ord_id = f"ORD_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
-class OrderExecutionManager:
-    """Gerenciador de execução de ordens com ProfitDLL"""
+class OrderExecutionManagerV4:
+    """Gerenciador de execução de ordens com ProfitDLL v4.0.0.30"""
     
     def __init__(self, connection_manager):
         self.connection_manager = connection_manager
@@ -74,6 +88,7 @@ class OrderExecutionManager:
         
         # Informações da conta
         self.account_info = None
+        self.account_identifier = None  # TConnectorAccountIdentifier
         self.position_tracker = {}  # symbol -> position
         
         # Thread de processamento
@@ -89,12 +104,14 @@ class OrderExecutionManager:
             'retry_delay': 1.0,
             'order_timeout': 30.0,
             'use_market_orders': False,
-            'default_broker_id': '1'  # Ajustar conforme necessário
+            'default_broker_id': 1  # Numérico para v4.0.0.30
         }
+        
+        self.logger.info("OrderExecutionManagerV4 criado - Compatível com ProfitDLL v4.0.0.30")
         
     def initialize(self):
         """Inicializa o gerenciador de ordens"""
-        self.logger.info("Inicializando OrderExecutionManager")
+        self.logger.info("Inicializando OrderExecutionManagerV4")
         
         # Obter informações da conta
         self._get_account_info()
@@ -108,15 +125,19 @@ class OrderExecutionManager:
         self.processing_thread.daemon = True
         self.processing_thread.start()
         
-        self.logger.info("OrderExecutionManager inicializado")
+        self.logger.info("OrderExecutionManagerV4 inicializado")
     
     def _get_account_info(self):
-        """Obtém informações da conta via DLL"""
+        """Obtém informações da conta via DLL v4.0.0.30"""
         try:
             # GetAccount retorna informações via callback
-            self.connection_manager.dll.GetAccount()
-            # Aguardar callback ser chamado
-            threading.Event().wait(0.5)
+            result = self.connection_manager.dll.GetAccount()
+            if result == NResult.NL_OK:
+                self.logger.info("Solicitação de informações de conta enviada")
+                # Aguardar callback ser chamado
+                threading.Event().wait(0.5)
+            else:
+                self.logger.error(f"Erro ao solicitar informações de conta: {result}")
         except Exception as e:
             self.logger.error(f"Erro obtendo informações da conta: {e}")
     
@@ -210,8 +231,9 @@ class OrderExecutionManager:
             order_type=order_type,
             quantity=signal['quantity'],
             price=signal.get('price', 0.0),
+            stop_price=signal.get('stop_price', 0.0),
             account_id=self.account_info.get('account_id', '') if self.account_info else '',
-            broker_id=self.account_info.get('broker_id', self.config['default_broker_id']) if self.account_info else self.config['default_broker_id'],
+            broker_id=str(self.account_info.get('broker_id', self.config['default_broker_id'])) if self.account_info else str(self.config['default_broker_id']),
             password=signal.get('password', '')  # Senha de roteamento se necessária
         )
         
@@ -234,30 +256,25 @@ class OrderExecutionManager:
                 self.logger.error(f"Erro processando ordem: {e}")
     
     def _execute_order(self, order: Order):
-        """Executa uma ordem via ProfitDLL"""
+        """Executa uma ordem via ProfitDLL v4.0.0.30"""
         try:
-            self.logger.info(f"Executando ordem: {order.symbol} {order.side.name} {order.quantity}")
+            self.logger.info(f"Executando ordem v4.0.0.30: {order.symbol} {order.side.name} {order.quantity}")
             
-            # Preparar parâmetros
-            symbol = order.symbol
-            exchange = self._get_exchange_for_symbol(symbol)
+            # Verificar se temos account_identifier
+            if not self.account_identifier:
+                self.logger.error("Account identifier não disponível")
+                order.status = OrderStatus.ERROR
+                return
             
-            # Chamar método apropriado da DLL
-            if order.order_type == OrderType.MARKET:
-                profit_id = self._send_market_order(order, exchange)
-            elif order.order_type == OrderType.LIMIT:
-                profit_id = self._send_limit_order(order, exchange)
-            elif order.order_type == OrderType.STOP:
-                profit_id = self._send_stop_order(order, exchange)
-            else:
-                raise ValueError(f"Tipo de ordem não suportado: {order.order_type}")
+            # Usar nova função SendOrder unificada
+            profit_id = self._send_order_v4(order)
             
             # Atualizar ordem com ID retornado
             if profit_id > 0:
                 order.profit_id = profit_id
                 order.status = OrderStatus.SENT
-                self.pending_orders[str(profit_id)] = order
-                self.logger.info(f"Ordem enviada com sucesso. ProfitID: {profit_id}")
+                self.pending_orders[order.cl_ord_id] = order
+                self.logger.info(f"Ordem enviada com sucesso. ProfitID: {profit_id}, ClientOrderID: {order.cl_ord_id}")
             else:
                 order.status = OrderStatus.ERROR
                 self.logger.error(f"Falha ao enviar ordem. Retorno: {profit_id}")
@@ -266,98 +283,74 @@ class OrderExecutionManager:
             self.logger.error(f"Erro executando ordem: {e}")
             order.status = OrderStatus.ERROR
     
-    def _send_market_order(self, order: Order, exchange: str) -> int:
-        """Envia ordem a mercado"""
-        dll = self.connection_manager.dll
+    def _send_order_v4(self, order: Order) -> int:
+        """
+        Envia ordem usando API v4.0.0.30 com SendOrder unificado
         
-        if order.side == OrderSide.BUY:
-            return dll.SendOrder(
-                order.account_id,
-                order.broker_id,
-                order.password,
-                order.symbol,
-                exchange,
-                order.quantity
+        Returns:
+            int: LocalOrderID (>0 sucesso, <0 erro)
+        """
+        try:
+            # Mapear tipo de ordem
+            dll_order_type = DLLOrderType.MARKET
+            if order.order_type == OrderType.LIMIT:
+                dll_order_type = DLLOrderType.LIMIT
+            elif order.order_type == OrderType.STOP:
+                dll_order_type = DLLOrderType.STOP
+            elif order.order_type == OrderType.STOP_LIMIT:
+                dll_order_type = DLLOrderType.STOP_LIMIT
+            
+            # Criar estrutura de envio usando helper
+            send_order = create_send_order(
+                account=self.account_identifier,
+                symbol=order.symbol,
+                side=DLLOrderSide(order.side.value),
+                order_type=dll_order_type,
+                quantity=order.quantity,
+                price=order.price,
+                stop_price=order.stop_price,
+                password=order.password
             )
-        else:
-            return dll.SendOrder(
-                order.account_id,
-                order.broker_id,
-                order.password,
-                order.symbol,
-                exchange,
-                order.quantity
-            )
-    
-    def _send_limit_order(self, order: Order, exchange: str) -> int:
-        """Envia ordem limite"""
-        dll = self.connection_manager.dll
-        
-        if order.side == OrderSide.BUY:
-            return dll.SendOrder(
-                order.account_id,
-                order.broker_id,
-                order.password,
-                order.symbol,
-                exchange,
-                order.price,
-                order.quantity
-            )
-        else:
-            return dll.SendOrder(
-                order.account_id,
-                order.broker_id,
-                order.password,
-                order.symbol,
-                exchange,
-                order.price,
-                order.quantity
-            )
-    
-    def _send_stop_order(self, order: Order, exchange: str) -> int:
-        """Envia ordem stop"""
-        dll = self.connection_manager.dll
-        
-        if order.side == OrderSide.BUY:
-            return dll.SendStopBuyOrder(
-                order.account_id,
-                order.broker_id,
-                order.password,
-                order.symbol,
-                exchange,
-                order.price,
-                order.stop_price,
-                order.quantity
-            )
-        else:
-            return dll.SendStopSellOrder(
-                order.account_id,
-                order.broker_id,
-                order.password,
-                order.symbol,
-                exchange,
-                order.price,
-                order.stop_price,
-                order.quantity
-            )
+            
+            # Adicionar client order ID
+            send_order.ClientOrderID = order.cl_ord_id
+            
+            # Log de debug
+            self.logger.debug(f"Enviando ordem: Symbol={order.symbol}, Side={order.side.value}, "
+                            f"Type={dll_order_type}, Qty={order.quantity}, Price={order.price}")
+            
+            # Chamar SendOrder da DLL
+            result = self.connection_manager.dll.SendOrder(byref(send_order))
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Erro em _send_order_v4: {e}")
+            return -1
     
     def cancel_order(self, order_id: str) -> bool:
-        """Cancela uma ordem"""
+        """Cancela uma ordem usando SendCancelOrderV2"""
         try:
             order = self.pending_orders.get(order_id)
             if not order:
                 self.logger.error(f"Ordem não encontrada: {order_id}")
                 return False
             
-            # Cancelar via DLL
-            result = self.connection_manager.dll.SendCancelOrderV2(
-                order.account_id,
-                order.broker_id,
-                order.cl_ord_id,
-                order.password
+            if not self.account_identifier:
+                self.logger.error("Account identifier não disponível")
+                return False
+            
+            # Criar estrutura de cancelamento
+            cancel_order = create_cancel_order(
+                account=self.account_identifier,
+                client_order_id=order.cl_ord_id,
+                password=order.password
             )
             
-            if result == 0:  # NL_OK
+            # Cancelar via DLL v4.0.0.30
+            result = self.connection_manager.dll.SendCancelOrderV2(byref(cancel_order))
+            
+            if result == NResult.NL_OK:
                 self.logger.info(f"Ordem cancelada: {order_id}")
                 return True
             else:
@@ -369,34 +362,82 @@ class OrderExecutionManager:
             return False
     
     def cancel_all_orders(self, symbol: Optional[str] = None) -> bool:
-        """Cancela todas as ordens ou todas de um símbolo"""
+        """Cancela todas as ordens usando SendCancelOrdersV2 ou SendCancelAllOrdersV2"""
         try:
-            if not self.account_info:
+            if not self.account_identifier:
+                self.logger.error("Account identifier não disponível")
                 return False
             
             if symbol:
-                # Cancelar ordens de um símbolo
-                exchange = self._get_exchange_for_symbol(symbol)
-                result = self.connection_manager.dll.SendCancelOrders(
-                    self.account_info['account_id'],
-                    self.account_info['broker_id'],
-                    self.account_info.get('password', ''),
-                    symbol,
-                    exchange
-                )
+                # Cancelar ordens de um símbolo específico
+                cancel_orders = TConnectorCancelOrders()
+                cancel_orders.AccountID = POINTER(TConnectorAccountIdentifier)(self.account_identifier)
+                cancel_orders.Password = c_wchar_p("")  # Senha se necessária
+                cancel_orders.Ticker = c_wchar_p(symbol)
+                cancel_orders.Exchange = c_wchar_p(self._get_exchange_for_symbol(symbol))
+                cancel_orders.Side = 0  # 0 = Ambos os lados
+                
+                result = self.connection_manager.dll.SendCancelOrdersV2(byref(cancel_orders))
             else:
                 # Cancelar todas as ordens
-                result = self.connection_manager.dll.SendCancelAllOrders(
-                    self.account_info['account_id'],
-                    self.account_info['broker_id'],
-                    self.account_info.get('password', '')
-                )
+                cancel_all = TConnectorCancelAllOrders()
+                cancel_all.AccountID = POINTER(TConnectorAccountIdentifier)(self.account_identifier)
+                cancel_all.Password = c_wchar_p("")  # Senha se necessária
+                
+                result = self.connection_manager.dll.SendCancelAllOrdersV2(byref(cancel_all))
             
-            return result == 0  # NL_OK
+            if result == NResult.NL_OK:
+                self.logger.info(f"Ordens canceladas com sucesso")
+                return True
+            else:
+                self.logger.error(f"Falha ao cancelar ordens: {result}")
+                return False
             
         except Exception as e:
             self.logger.error(f"Erro cancelando ordens: {e}")
             return False
+    
+    def get_position(self, symbol: str) -> Optional[Dict]:
+        """Obtém posição atual usando GetPositionV2"""
+        try:
+            if not self.account_identifier:
+                return None
+            
+            position = TConnectorTradingAccountPosition()
+            position.AccountID = self.account_identifier
+            position.AssetID.pwcTicker = c_wchar_p(symbol)
+            position.AssetID.pwcBolsa = c_wchar_p(self._get_exchange_for_symbol(symbol))
+            
+            # GetPositionV2 preenche a estrutura
+            result = self.connection_manager.dll.GetPositionV2(byref(position))
+            
+            if result == NResult.NL_OK:
+                # Converter para dicionário
+                return {
+                    'symbol': symbol,
+                    'quantity': position.Quantity,
+                    'side': 'long' if position.Side == 1 else 'short',
+                    'avg_price': position.AveragePrice,
+                    'current_price': position.CurrentPrice,
+                    'pnl': position.PnL,
+                    'pnl_percent': position.PnLPercent,
+                    'available_qty': position.AvailableQuantity
+                }
+            elif result == NResult.NL_NO_POSITION:
+                self.logger.info(f"Sem posição em {symbol}")
+                return {
+                    'symbol': symbol,
+                    'quantity': 0,
+                    'side': None,
+                    'avg_price': 0.0
+                }
+            else:
+                self.logger.error(f"Erro obtendo posição: {result}")
+                return None
+            
+        except Exception as e:
+            self.logger.error(f"Erro obtendo posição: {e}")
+            return None
     
     def close_position(self, symbol: str, at_market: bool = False) -> Optional[Order]:
         """Fecha posição de um símbolo"""
@@ -416,11 +457,12 @@ class OrderExecutionManager:
             
             if not at_market:
                 # Usar preço atual para ordem limite
-                current_price = self._get_current_price(symbol)
-                if position['side'] == 'long':
-                    signal['price'] = current_price - 1  # Melhorar preço para venda
-                else:
-                    signal['price'] = current_price + 1  # Melhorar preço para compra
+                current_price = position.get('current_price', 0.0)
+                if current_price > 0:
+                    if position['side'] == 'long':
+                        signal['price'] = current_price - 1  # Melhorar preço para venda
+                    else:
+                        signal['price'] = current_price + 1  # Melhorar preço para compra
             
             return self.send_order(signal)
             
@@ -428,77 +470,47 @@ class OrderExecutionManager:
             self.logger.error(f"Erro fechando posição: {e}")
             return None
     
-    def get_position(self, symbol: str) -> Optional[Dict]:
-        """Obtém posição atual de um símbolo"""
-        try:
-            if not self.account_info:
-                return None
-            
-            exchange = self._get_exchange_for_symbol(symbol)
-            
-            # GetPosition retorna um ponteiro para estrutura
-            position_ptr = self.connection_manager.dll.GetPositionV2(
-                self.account_info['account_id'],
-                self.account_info['broker_id'],
-                symbol,
-                exchange
-            )
-            
-            if position_ptr:
-                # Parsear estrutura de posição
-                # TODO: Implementar parsing da estrutura conforme documentação
-                return self.position_tracker.get(symbol, {
-                    'symbol': symbol,
-                    'quantity': 0,
-                    'side': None,
-                    'avg_price': 0.0
-                })
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Erro obtendo posição: {e}")
-            return None
-    
     def _on_order_update(self, order_data: Dict):
-        """Callback para atualizações de ordem"""
+        """Callback para atualizações de ordem - compatível com v4.0.0.30"""
         try:
-            profit_id = str(order_data.get('profit_id'))
-            cl_ord_id = order_data.get('cl_ord_id')
+            # Na v4.0.0.30, o callback recebe um ponteiro para TConnectorOrderOut
+            # order_data deve ser processado adequadamente
             
-            # Encontrar ordem
-            order = self.pending_orders.get(profit_id)
-            if not order and cl_ord_id:
-                # Procurar por cl_ord_id
-                for o in self.pending_orders.values():
-                    if o.cl_ord_id == cl_ord_id:
-                        order = o
-                        break
+            cl_ord_id = order_data.get('client_order_id', '')
+            profit_id = order_data.get('profit_id', 0)
+            
+            # Encontrar ordem por client order ID
+            order = self.pending_orders.get(cl_ord_id)
             
             if order:
-                # Atualizar status
-                status = order_data.get('status', '').lower()
-                if 'filled' in status:
+                # Mapear status da DLL para status interno
+                dll_status = order_data.get('status', 0)
+                
+                if dll_status == DLLOrderStatus.FILLED:
                     order.status = OrderStatus.FILLED
-                    order.fill_price = order_data.get('avg_price', 0.0)
-                    order.filled_qty = order_data.get('traded_qty', 0)
+                    order.fill_price = order_data.get('average_price', 0.0)
+                    order.filled_qty = order_data.get('executed_quantity', 0)
                     
                     # Mover para executadas
-                    self.executed_orders[profit_id] = order
-                    del self.pending_orders[profit_id]
+                    self.executed_orders[cl_ord_id] = order
+                    del self.pending_orders[cl_ord_id]
                     
-                elif 'partial' in status:
+                elif dll_status == DLLOrderStatus.PARTIALLY_FILLED:
                     order.status = OrderStatus.PARTIAL
-                    order.filled_qty = order_data.get('traded_qty', 0)
-                    order.remaining_qty = order_data.get('leaves_qty', 0)
+                    order.filled_qty = order_data.get('executed_quantity', 0)
+                    order.remaining_qty = order_data.get('remaining_quantity', 0)
                     
-                elif 'cancelled' in status or 'canceled' in status:
+                elif dll_status == DLLOrderStatus.CANCELLED:
                     order.status = OrderStatus.CANCELLED
-                    del self.pending_orders[profit_id]
+                    del self.pending_orders[cl_ord_id]
                     
-                elif 'rejected' in status:
+                elif dll_status == DLLOrderStatus.REJECTED:
                     order.status = OrderStatus.REJECTED
-                    del self.pending_orders[profit_id]
+                    del self.pending_orders[cl_ord_id]
+                
+                # Atualizar profit_id se ainda não temos
+                if profit_id > 0 and order.profit_id == 0:
+                    order.profit_id = profit_id
                 
                 # Notificar callbacks
                 self._notify_order_update(order)
@@ -507,9 +519,23 @@ class OrderExecutionManager:
             self.logger.error(f"Erro processando atualização de ordem: {e}")
     
     def _on_account_info(self, account_data: Dict):
-        """Callback para informações da conta"""
-        self.account_info = account_data
-        self.logger.info(f"Informações da conta recebidas: {account_data.get('account_id')}")
+        """Callback para informações da conta - compatível com v4.0.0.30"""
+        try:
+            self.account_info = account_data
+            
+            # Criar account identifier para v4.0.0.30
+            if account_data.get('broker_id') and account_data.get('account_id'):
+                self.account_identifier = create_account_identifier(
+                    broker_id=int(account_data.get('broker_id', 0)),
+                    account_id=account_data.get('account_id', ''),
+                    sub_account_id=account_data.get('sub_account_id', '')
+                )
+                self.logger.info(f"Account identifier criado: Broker={self.account_identifier.BrokerID}, "
+                               f"Account={self.account_identifier.AccountID}")
+            
+            self.logger.info(f"Informações da conta recebidas: {account_data.get('account_id')}")
+        except Exception as e:
+            self.logger.error(f"Erro processando informações da conta: {e}")
     
     def _notify_order_update(self, order: Order):
         """Notifica callbacks registrados sobre atualização de ordem"""
@@ -531,11 +557,6 @@ class OrderExecutionManager:
         else:
             return 'B'  # Bovespa
     
-    def _get_current_price(self, symbol: str) -> float:
-        """Obtém preço atual do símbolo"""
-        # TODO: Implementar obtenção de preço atual do market data
-        return 0.0
-    
     def get_order_status(self, order_id: str) -> Optional[OrderStatus]:
         """Obtém status de uma ordem"""
         order = self.pending_orders.get(order_id) or self.executed_orders.get(order_id)
@@ -551,7 +572,7 @@ class OrderExecutionManager:
     
     def shutdown(self):
         """Finaliza o gerenciador de ordens"""
-        self.logger.info("Finalizando OrderExecutionManager")
+        self.logger.info("Finalizando OrderExecutionManagerV4")
         
         # Cancelar ordens pendentes
         self.cancel_all_orders()
@@ -561,4 +582,4 @@ class OrderExecutionManager:
         if self.processing_thread:
             self.processing_thread.join(timeout=5.0)
         
-        self.logger.info("OrderExecutionManager finalizado")
+        self.logger.info("OrderExecutionManagerV4 finalizado")
