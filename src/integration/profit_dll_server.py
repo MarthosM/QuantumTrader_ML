@@ -93,9 +93,8 @@ class ProfitDLLServer:
             send_thread = threading.Thread(target=self._send_loop, daemon=True)
             send_thread.start()
             
-            # 4. Aguardar conexão do cliente
-            self.logger.info("Aguardando conexão do cliente HMARL...")
-            self._wait_for_client()
+            # 4. Servidor pronto para conexões
+            self.logger.info("Servidor pronto - aguardando conexões...")
             
             # 5. Loop principal
             self._main_loop()
@@ -163,8 +162,12 @@ class ProfitDLLServer:
             # Criar connection manager
             self.connection_manager = ConnectionManagerV4(dll_path)
             
-            # Registrar callback que adiciona à fila
+            # Registrar callbacks
             self.connection_manager.register_trade_callback(self._on_trade_data)
+            
+            # Registrar callbacks de book
+            self.connection_manager.register_offer_book_callback(self._on_offer_book_data)
+            self.connection_manager.register_price_book_callback(self._on_price_book_data)
             
             # Conectar
             self.logger.info("Conectando ao ProfitDLL...")
@@ -173,7 +176,7 @@ class ProfitDLLServer:
                 username=username,
                 password=password
             ):
-                self.logger.info("✅ ProfitDLL conectado com sucesso!")
+                self.logger.info("ProfitDLL conectado com sucesso!")
                 
                 # Notificar cliente
                 self._queue_message({
@@ -202,6 +205,52 @@ class ProfitDLLServer:
             message = {
                 'type': 'trade',
                 'data': trade_data
+            }
+            
+            # Adicionar à fila (não bloqueia)
+            if not self.send_queue.full():
+                self.send_queue.put_nowait(message)
+            else:
+                # Se fila cheia, descartar mensagens antigas
+                try:
+                    self.send_queue.get_nowait()
+                    self.send_queue.put_nowait(message)
+                except:
+                    pass
+                    
+        except Exception as e:
+            self.stats['errors'] += 1
+    
+    def _on_offer_book_data(self, book_data: Dict):
+        """Callback para dados de offer book - adiciona à fila"""
+        try:
+            # Adicionar tipo de mensagem
+            message = {
+                'type': 'offer_book',
+                'data': book_data
+            }
+            
+            # Adicionar à fila (não bloqueia)
+            if not self.send_queue.full():
+                self.send_queue.put_nowait(message)
+            else:
+                # Se fila cheia, descartar mensagens antigas
+                try:
+                    self.send_queue.get_nowait()
+                    self.send_queue.put_nowait(message)
+                except:
+                    pass
+                    
+        except Exception as e:
+            self.stats['errors'] += 1
+    
+    def _on_price_book_data(self, book_data: Dict):
+        """Callback para dados de price book - adiciona à fila"""
+        try:
+            # Adicionar tipo de mensagem
+            message = {
+                'type': 'price_book',
+                'data': book_data
             }
             
             # Adicionar à fila (não bloqueia)
@@ -263,13 +312,36 @@ class ProfitDLLServer:
         
         while self.is_running and not self.shutdown_event.is_set():
             try:
-                # Verificar comandos do cliente
-                if self.client_conn and self.client_conn.poll(0.1):
+                # Aceitar novas conexões se não houver cliente
+                if not self.client_conn:
                     try:
-                        command = self.client_conn.recv()
-                        self._handle_command(command)
+                        # Verificar se há conexão pendente (non-blocking)
+                        import socket
+                        self.listener._listener._socket.settimeout(0.1)
+                        self.client_conn = self.listener.accept()
+                        self.logger.info(f"Cliente conectado de {self.listener.last_accepted}")
+                        
+                        # Enviar mensagem de boas-vindas
+                        welcome_msg = {
+                            'type': 'connection',
+                            'status': 'connected',
+                            'server_version': '1.0.0',
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        self.client_conn.send(welcome_msg)
+                    except socket.timeout:
+                        pass  # Nenhuma conexão pendente
+                    except Exception as e:
+                        pass  # Ignorar outros erros
+                
+                # Verificar comandos do cliente
+                if self.client_conn:
+                    try:
+                        if self.client_conn.poll(0.1):
+                            command = self.client_conn.recv()
+                            self._handle_command(command)
                     except (EOFError, ConnectionError):
-                        self.logger.warning("Cliente desconectado durante recepção")
+                        self.logger.warning("Cliente desconectado")
                         self.client_conn = None
                 
                 # Enviar heartbeat periodicamente
@@ -315,6 +387,10 @@ class ProfitDLLServer:
                         'timestamp': datetime.now().isoformat()
                     })
                     
+            elif cmd_type == 'collect_historical':
+                # Coletar dados históricos
+                self._handle_historical_collection(command)
+                
             elif cmd_type == 'get_stats':
                 self._send_stats()
                 
@@ -330,6 +406,73 @@ class ProfitDLLServer:
                 
         except Exception as e:
             self.logger.error(f"Erro processando comando: {e}")
+    
+    def _handle_historical_collection(self, command: Dict):
+        """Processa coleta de dados históricos"""
+        try:
+            symbol = command.get('symbol')
+            start_date = command.get('start_date')
+            end_date = command.get('end_date')
+            
+            self.logger.info(f"Coletando dados históricos: {symbol} de {start_date} até {end_date}")
+            
+            # Buffer para coletar dados
+            historical_buffer = []
+            collection_complete = threading.Event()
+            
+            # Callback para dados históricos
+            def on_history_trade(trade_data: Dict):
+                historical_buffer.append({
+                    'timestamp': trade_data.get('date', ''),
+                    'price': trade_data.get('price', 0),
+                    'volume': trade_data.get('volume', 0),
+                    'quantity': trade_data.get('quantity', 0),
+                    'trade_type': trade_data.get('trade_type', 0),
+                    'buy_agent': trade_data.get('buy_agent', 0),
+                    'sell_agent': trade_data.get('sell_agent', 0)
+                })
+            
+            # Registrar callback temporário
+            self.connection_manager.register_history_trade_callback(on_history_trade)
+            
+            # Solicitar dados históricos
+            success = self.connection_manager.get_history_trades(
+                ticker=symbol,
+                exchange="F",  # Usar "F" para futuros, não "BMF"
+                date_start=start_date,
+                date_end=end_date
+            )
+            
+            if success:
+                # Aguardar coleta (máximo 30 segundos)
+                time.sleep(5)
+                
+                # Enviar dados coletados
+                self._queue_message({
+                    'type': 'historical_data',
+                    'symbol': symbol,
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'data': historical_buffer,
+                    'count': len(historical_buffer),
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+                self.logger.info(f"Enviados {len(historical_buffer)} trades históricos")
+            else:
+                self._queue_message({
+                    'type': 'error',
+                    'message': 'Falha ao solicitar dados históricos',
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+        except Exception as e:
+            self.logger.error(f"Erro na coleta histórica: {e}")
+            self._queue_message({
+                'type': 'error',
+                'message': str(e),
+                'timestamp': datetime.now().isoformat()
+            })
     
     def _send_heartbeat(self):
         """Envia heartbeat ao cliente"""

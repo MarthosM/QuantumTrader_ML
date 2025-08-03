@@ -15,19 +15,23 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import argparse
 import logging
 from datetime import datetime, timedelta
+from typing import List, Dict, Optional
 import json
 from pathlib import Path
 import schedule
 import time
+import multiprocessing
+from dotenv import load_dotenv
 
 from src.database.historical_data_collector import HistoricalDataCollector
-from src.database.database_manager import DatabaseManager
-from src.database.data_validator import DataValidator
-from src.database.data_merger import DataMerger, DataSource
+from src.integration.profit_dll_server import run_server
+
+# Carregar variáveis de ambiente
+load_dotenv()
 
 
 class AutomatedDataCollector:
-    """Sistema automatizado de coleta de dados"""
+    """Sistema automatizado de coleta de dados com processo isolado"""
     
     def __init__(self, config_path: str):
         """
@@ -45,9 +49,7 @@ class AutomatedDataCollector:
         
         # Inicializar componentes
         self.collector = HistoricalDataCollector(self.config)
-        self.db_manager = DatabaseManager(self.config.get('db_path', 'data/trading_db'))
-        self.validator = DataValidator(self.config)
-        self.merger = DataMerger(self.config)
+        self.server_process = None
         
         # Estado
         self.collection_status = {
@@ -56,9 +58,6 @@ class AutomatedDataCollector:
             'errors': [],
             'symbols_collected': {}
         }
-        
-        # Carregar estado anterior
-        self._load_state()
     
     def _setup_logging(self):
         """Configura sistema de logging"""
@@ -79,8 +78,8 @@ class AutomatedDataCollector:
         self.logger = logging.getLogger(__name__)
     
     def collect_all_symbols(self, 
-                          start_date: Optional[datetime] = None,
-                          end_date: Optional[datetime] = None):
+                          start_date: datetime = None,
+                          end_date: datetime = None):
         """
         Coleta dados para todos os símbolos configurados
         
@@ -107,16 +106,7 @@ class AutomatedDataCollector:
                 self.logger.info(f"Coletando dados para {symbol}")
                 self.logger.info(f"{'='*60}")
                 
-                # Verificar última coleta
-                last_collected = self._get_last_collection_date(symbol)
-                if last_collected:
-                    # Coletar apenas dados novos
-                    collection_start = last_collected + timedelta(days=1)
-                    if collection_start > end_date:
-                        self.logger.info(f"{symbol} já está atualizado")
-                        continue
-                else:
-                    collection_start = start_date
+                collection_start = start_date
                 
                 # Coletar dados
                 success = self._collect_symbol_data(
@@ -147,7 +137,6 @@ class AutomatedDataCollector:
         
         # Salvar estado
         self.collection_status['last_success'] = datetime.now().isoformat()
-        self._save_state()
         
         # Gerar relatório
         self._generate_collection_report()
@@ -159,7 +148,7 @@ class AutomatedDataCollector:
                            data_types: List[str]) -> bool:
         """Coleta dados para um símbolo específico"""
         try:
-            # 1. Coletar dados brutos
+            # Coletar dados usando a estratégia otimizada
             raw_data = self.collector.collect_historical_data(
                 symbol=symbol,
                 start_date=start_date,
@@ -167,55 +156,64 @@ class AutomatedDataCollector:
                 data_types=data_types
             )
             
-            if not raw_data or all(df.empty for df in raw_data.values()):
+            # Verificar se coletou dados
+            if 'trades' in raw_data and not raw_data['trades'].empty:
+                self.logger.info(f"Coletados {len(raw_data['trades'])} trades")
+                return True
+            elif 'candles' in raw_data and not raw_data['candles'].empty:
+                self.logger.info(f"Coletados {len(raw_data['candles'])} candles")
+                return True
+            else:
                 self.logger.warning(f"Nenhum dado coletado para {symbol}")
                 return False
-            
-            # 2. Processar cada tipo de dado
-            for data_type in data_types:
-                if data_type not in raw_data or raw_data[data_type].empty:
-                    continue
-                
-                self.logger.info(f"Processando {len(raw_data[data_type])} registros de {data_type}")
-                
-                # Dividir por dia para processamento
-                daily_groups = raw_data[data_type].groupby(
-                    pd.to_datetime(raw_data[data_type]['datetime']).dt.date
-                )
-                
-                for date, day_data in daily_groups:
-                    # 3. Validar dados
-                    validation = self.validator.validate_data(
-                        data=day_data,
-                        data_type=data_type,
-                        symbol=symbol,
-                        date=date,
-                        auto_fix=True
-                    )
-                    
-                    if not validation.is_valid:
-                        self.logger.error(f"Dados inválidos para {date}: {validation.errors}")
-                        continue
-                    
-                    # 4. Armazenar no banco
-                    stored = self.db_manager.store_data(
-                        symbol=symbol,
-                        data_type=data_type,
-                        data=day_data,
-                        date=datetime.combine(date, datetime.min.time()),
-                        validate=False  # Já validado
-                    )
-                    
-                    if stored:
-                        self.logger.info(f"Armazenados dados de {data_type} para {date}")
-                    else:
-                        self.logger.error(f"Falha ao armazenar {data_type} para {date}")
-            
-            return True
             
         except Exception as e:
             self.logger.error(f"Erro no processamento: {e}")
             return False
+    
+    def start_isolated_server(self):
+        """Inicia servidor ProfitDLL em processo isolado"""
+        import multiprocessing
+        
+        server_config = {
+            'dll_path': self.config.get('dll_path', r"C:\Users\marth\Downloads\ProfitDLL\DLLs\Win64\ProfitDLL.dll"),
+            'username': os.getenv("PROFIT_USERNAME"),
+            'password': os.getenv("PROFIT_PASSWORD"),
+            'key': os.getenv("PROFIT_KEY"),
+            'port': self.config.get('profitdll_server_port', 6790)
+        }
+        
+        self.logger.info("Iniciando servidor ProfitDLL isolado...")
+        self.server_process = multiprocessing.Process(
+            target=run_server,
+            args=(server_config,),
+            name="ProfitDLLServer"
+        )
+        self.server_process.daemon = True
+        self.server_process.start()
+        
+        # Aguardar servidor inicializar
+        time.sleep(8)  # Dar mais tempo para conectar ao ProfitDLL
+        
+        if self.server_process.is_alive():
+            self.logger.info(f"✅ Servidor rodando (PID: {self.server_process.pid})")
+            return True
+        else:
+            self.logger.error("❌ Servidor falhou ao iniciar")
+            return False
+    
+    def stop_server(self):
+        """Para servidor ProfitDLL"""
+        if self.server_process and self.server_process.is_alive():
+            self.logger.info("Parando servidor ProfitDLL...")
+            self.server_process.terminate()
+            self.server_process.join(timeout=10)
+            
+            if self.server_process.is_alive():
+                self.server_process.kill()
+                self.server_process.join()
+            
+            self.logger.info("Servidor parado")
     
     def update_recent_data(self, days_back: int = 7):
         """
@@ -228,156 +226,29 @@ class AutomatedDataCollector:
         start_date = end_date - timedelta(days=days_back)
         
         self.logger.info(f"Atualizando dados dos últimos {days_back} dias")
-        self.collect_all_symbols(start_date, end_date)
-    
-    def fill_gaps(self):
-        """Identifica e preenche gaps nos dados históricos"""
-        self.logger.info("Verificando gaps nos dados...")
         
-        symbols = self.config.get('symbols', [])
-        
-        for symbol in symbols:
-            # Obter estatísticas do banco
-            stats = self.db_manager.get_data_stats(symbol)
-            
-            if not stats:
-                self.logger.warning(f"Sem dados para {symbol}")
-                continue
-            
-            for stat in stats:
-                # Verificar continuidade
-                expected_days = (stat.end_date - stat.start_date).days
-                actual_days = stat.total_records / 390  # ~390 minutos de pregão
-                
-                if actual_days < expected_days * 0.8:  # Menos de 80% dos dias esperados
-                    self.logger.info(f"Gap detectado em {symbol} {stat.data_type}: "
-                                   f"{actual_days:.0f}/{expected_days} dias")
-                    
-                    # Tentar preencher o gap
-                    self._fill_data_gap(symbol, stat.data_type, 
-                                      stat.start_date, stat.end_date)
-    
-    def _fill_data_gap(self, symbol: str, data_type: str, 
-                      start_date: datetime, end_date: datetime):
-        """Preenche gap específico nos dados"""
-        # Identificar dias faltantes
-        existing_dates = self.db_manager.get_available_dates(symbol, data_type)
-        
-        all_dates = []
-        current = start_date
-        while current <= end_date:
-            if current.weekday() < 5:  # Dias úteis
-                all_dates.append(current)
-            current += timedelta(days=1)
-        
-        missing_dates = set(all_dates) - set(existing_dates)
-        
-        if missing_dates:
-            self.logger.info(f"Preenchendo {len(missing_dates)} dias faltantes")
-            
-            # Agrupar em períodos contínuos
-            missing_sorted = sorted(list(missing_dates))
-            
-            # Coletar períodos faltantes
-            for date in missing_sorted:
-                self._collect_symbol_data(
-                    symbol=symbol,
-                    start_date=date,
-                    end_date=date,
-                    data_types=[data_type]
-                )
-    
-    def merge_sources(self, symbol: str, start_date: datetime, end_date: datetime):
-        """
-        Combina dados de múltiplas fontes
-        
-        Útil quando temos dados parciais de diferentes fontes
-        """
-        self.logger.info(f"Merging dados de múltiplas fontes para {symbol}")
-        
-        sources = []
-        
-        # Fonte 1: Banco de dados local
-        db_data = self.db_manager.load_data(
-            symbol=symbol,
-            data_type='trades',
-            start_date=start_date,
-            end_date=end_date
-        )
-        
-        if not db_data.empty:
-            sources.append(DataSource(
-                name="Database",
-                data=db_data,
-                quality_score=0.9,
-                priority=2,
-                metadata={'source': 'local_db'}
-            ))
-        
-        # Fonte 2: CSV se disponível
-        csv_path = Path(self.config.get('csv_dir', 'data/csv')) / f"{symbol}.csv"
-        if csv_path.exists():
-            csv_data = pd.read_csv(csv_path, parse_dates=['datetime'])
-            sources.append(DataSource(
-                name="CSV",
-                data=csv_data,
-                quality_score=0.8,
-                priority=3,
-                metadata={'source': 'csv_file'}
-            ))
-        
-        # Executar merge se temos múltiplas fontes
-        if len(sources) > 1:
-            merged = self.merger.merge_sources(
-                sources=sources,
-                start_date=start_date,
-                end_date=end_date,
-                data_type='trades'
-            )
-            
-            # Salvar resultado merged
-            if not merged.empty:
-                self.db_manager.store_data(
-                    symbol=symbol,
-                    data_type='trades_merged',
-                    data=merged,
-                    date=start_date,
-                    validate=True
-                )
-                
-                self.logger.info(f"Merge completo: {len(merged)} registros")
-    
-    def _get_last_collection_date(self, symbol: str) -> Optional[datetime]:
-        """Obtém data da última coleta bem-sucedida"""
-        stats = self.db_manager.get_data_stats(symbol)
-        
-        if stats:
-            # Retornar a data mais recente entre todos os tipos de dados
-            return max(stat.end_date for stat in stats)
-        
-        return None
-    
-    def _load_state(self):
-        """Carrega estado da última execução"""
-        state_file = Path(self.config.get('state_file', 'data/collector_state.json'))
-        
-        if state_file.exists():
-            try:
-                with open(state_file, 'r') as f:
-                    self.collection_status = json.load(f)
-            except Exception as e:
-                self.logger.error(f"Erro carregando estado: {e}")
-    
-    def _save_state(self):
-        """Salva estado atual"""
-        state_file = Path(self.config.get('state_file', 'data/collector_state.json'))
-        state_file.parent.mkdir(exist_ok=True)
+        # Iniciar servidor se necessário
+        if not self.server_process or not self.server_process.is_alive():
+            if not self.start_isolated_server():
+                self.logger.error("Falha ao iniciar servidor")
+                return
         
         try:
-            with open(state_file, 'w') as f:
-                json.dump(self.collection_status, f, indent=2)
-        except Exception as e:
-            self.logger.error(f"Erro salvando estado: {e}")
+            self.collect_all_symbols(start_date, end_date)
+        finally:
+            self.stop_server()
+    
+    def show_data_summary(self):
+        """Mostra resumo dos dados disponíveis"""
+        self.logger.info("\nResumo dos dados disponíveis:")
+        
+        for symbol in self.config.get('symbols', []):
+            summary = self.collector.get_data_summary(symbol)
+            if 'dates' in summary:
+                self.logger.info(f"\n{symbol}:")
+                self.logger.info(f"  Datas: {len(summary['dates'])} dias")
+                self.logger.info(f"  Tipos: {summary.get('data_types', [])}")
+                self.logger.info(f"  Tamanho: {summary.get('total_size_mb', 0):.2f} MB")
     
     def _generate_collection_report(self):
         """Gera relatório da coleta"""
@@ -397,14 +268,12 @@ class AutomatedDataCollector:
             for error in self.collection_status['errors'][-5:]:  # Últimos 5 erros
                 report.append(f"  - {error['symbol']}: {error['error'][:50]}...")
         
-        # Estatísticas do banco
-        report.append("\nEstatísticas do banco de dados:")
+        # Resumo dos dados
+        report.append("\nResumo dos dados coletados:")
         for symbol in self.config.get('symbols', []):
-            stats = self.db_manager.get_data_stats(symbol)
-            if stats:
-                total_records = sum(s.total_records for s in stats)
-                total_size = sum(s.total_size_mb for s in stats)
-                report.append(f"  {symbol}: {total_records:,} registros, {total_size:.1f} MB")
+            summary = self.collector.get_data_summary(symbol)
+            if 'dates' in summary:
+                report.append(f"  {symbol}: {len(summary['dates'])} dias, {summary.get('total_size_mb', 0):.1f} MB")
         
         report.append("="*60)
         
@@ -463,16 +332,15 @@ def main():
     config_path = Path(args.config)
     if not config_path.exists():
         default_config = {
-            "symbols": ["WDOU25", "WDOV25"],
-            "data_types": ["trades", "candles"],
-            "db_path": "data/trading_db",
+            "symbols": ["WDOQ25"],
+            "data_types": ["trades"],
+            "data_dir": "data/historical",
             "csv_dir": "data/csv",
             "log_dir": "logs",
             "report_dir": "reports",
             "state_file": "data/collector_state.json",
-            "connection": {
-                "dll_path": "C:\\ProfitDLL\\profit.dll"
-            }
+            "dll_path": r"C:\\Users\\marth\\Downloads\\ProfitDLL\\DLLs\\Win64\\ProfitDLL.dll",
+            "profitdll_server_port": 6790
         }
         
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -497,8 +365,8 @@ def main():
         collector.update_recent_data(args.days_back)
     
     elif args.mode == 'gaps':
-        # Preencher gaps
-        collector.fill_gaps()
+        # Mostrar resumo dos dados
+        collector.show_data_summary()
     
     elif args.mode == 'schedule':
         # Modo agendado
@@ -506,5 +374,6 @@ def main():
 
 
 if __name__ == "__main__":
-    import pandas as pd  # Import necessário para o script
+    # Necessário para Windows
+    multiprocessing.freeze_support()
     main()

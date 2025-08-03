@@ -42,5 +42,6 @@ tqdm==4.67.1
 typing_extensions==4.12.2
 tzdata==2025.1
 xgboost==2.1.4
+schedule==1.2.2
 # Note: TA-Lib não pode ser instalado no Windows sem Microsoft Visual C++ Build Tools
 # Usando 'ta' e 'pandas-ta' como alternativas funcionais para análise técnica

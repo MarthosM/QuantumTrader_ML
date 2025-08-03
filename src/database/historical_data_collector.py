@@ -5,20 +5,28 @@ Historical Data Collector - Coleta dados históricos do ProfitDLL
 Este módulo gerencia a coleta de dados históricos considerando as limitações:
 - ProfitDLL: máximo 3 meses, 9 em 9 dias
 - Combina com outras fontes (CSV, APIs) para histórico completo
+- Usa processo isolado para evitar Segmentation Fault
 """
 
 import os
+import sys
 import json
 import time
 import logging
+import queue
+import threading
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 from pathlib import Path
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import pyarrow as pa
+import pyarrow.parquet as pq
+from multiprocessing.connection import Client
 import requests
+
+# Adicionar path do projeto
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 class HistoricalDataCollector:
     """Coletor de dados históricos com gestão inteligente de fontes"""
@@ -250,50 +258,124 @@ class HistoricalDataCollector:
                                start_date: datetime,
                                end_date: datetime,
                                data_types: List[str]) -> Dict:
-        """Coleta dados do ProfitDLL"""
-        from connection_manager_v4 import ConnectionManagerV4 as ConnectionManager  # Import local
+        """Coleta dados do ProfitDLL usando servidor isolado"""
+        collected = {}
         
-        conn = ConnectionManager(self.config)
-        if not conn.connect():
+        # Conectar ao servidor ProfitDLL isolado
+        server_address = ('localhost', self.config.get('profitdll_server_port', 6789))
+        
+        try:
+            self.logger.info(f"Conectando ao servidor ProfitDLL em {server_address}")
+            client = Client(server_address, authkey=b'profit_dll_secret')
+            
+            # Receber mensagem de boas-vindas
+            welcome = client.recv()
+            if welcome.get('status') != 'connected':
+                raise ConnectionError("Falha ao conectar ao servidor ProfitDLL")
+            
+            # Enviar comando para coletar dados históricos
+            command = {
+                'type': 'collect_historical',
+                'symbol': symbol,
+                'start_date': start_date.strftime('%d/%m/%Y'),
+                'end_date': end_date.strftime('%d/%m/%Y'),
+                'data_types': data_types
+            }
+            
+            client.send(command)
+            
+            # Receber dados coletados
+            self.logger.info(f"Aguardando dados históricos de {symbol}...")
+            
+            # Timeout de 60 segundos para coleta
+            timeout = 60
+            start_time = time.time()
+            
+            while time.time() - start_time < timeout:
+                if client.poll(0.5):
+                    response = client.recv()
+                    
+                    if response.get('type') == 'historical_data':
+                        trades_data = response.get('data', [])
+                        
+                        # Organizar por data
+                        for trade in trades_data:
+                            date = pd.to_datetime(trade['timestamp']).date()
+                            if date not in collected:
+                                collected[date] = {}
+                            if 'trades' not in collected[date]:
+                                collected[date]['trades'] = []
+                            collected[date]['trades'].append(trade)
+                        
+                        self.logger.info(f"Recebidos {len(trades_data)} trades")
+                        break
+                        
+                    elif response.get('type') == 'error':
+                        error_msg = response.get('message', 'Erro desconhecido')
+                        self.logger.error(f"Erro do servidor: {error_msg}")
+                        break
+            
+            # Fechar conexão
+            client.send({'type': 'done'})
+            client.close()
+            
+        except Exception as e:
+            self.logger.error(f"Erro coletando do ProfitDLL isolado: {e}")
+            # Fallback para método direto se servidor não estiver rodando
+            self.logger.info("Tentando método direto (risco de Segfault)...")
+            collected = self._collect_from_profitdll_direct(
+                symbol, start_date, end_date, data_types
+            )
+        
+        return collected
+    
+    def _collect_from_profitdll_direct(self,
+                                     symbol: str,
+                                     start_date: datetime,
+                                     end_date: datetime,
+                                     data_types: List[str]) -> Dict:
+        """Coleta direta do ProfitDLL (método antigo - risco de Segfault)"""
+        from src.connection_manager_v4 import ConnectionManagerV4
+        
+        dll_path = self.config.get('dll_path', r"C:\Users\marth\Downloads\ProfitDLL\DLLs\Win64\ProfitDLL.dll")
+        conn = ConnectionManagerV4(dll_path)
+        
+        if not conn.initialize(
+            key=self.config.get('key'),
+            username=self.config.get('username'),
+            password=self.config.get('password')
+        ):
             raise ConnectionError("Falha ao conectar com ProfitDLL")
         
         collected = {}
         
         try:
-            # Coletar trades
-            if 'trades' in data_types:
-                trades = conn.get_historical_trades(
-                    symbol, 
-                    start_date.strftime('%Y%m%d'),
-                    end_date.strftime('%Y%m%d')
-                )
+            # Registrar callback para receber dados
+            trades_buffer = []
+            
+            def on_history_trade(trade_data):
+                trades_buffer.append(trade_data)
+            
+            conn.register_history_trade_callback(on_history_trade)
+            
+            # Solicitar dados históricos
+            if conn.get_history_trades(
+                symbol,
+                "BMF",
+                start_date.strftime('%d/%m/%Y'),
+                end_date.strftime('%d/%m/%Y')
+            ):
+                # Aguardar dados
+                time.sleep(5)
                 
                 # Organizar por data
-                for trade in trades:
+                for trade in trades_buffer:
                     date = pd.to_datetime(trade['timestamp']).date()
                     if date not in collected:
                         collected[date] = {}
                     if 'trades' not in collected[date]:
                         collected[date]['trades'] = []
                     collected[date]['trades'].append(trade)
-            
-            # Coletar candles
-            if 'candles' in data_types:
-                candles = conn.get_historical_candles(
-                    symbol,
-                    '1min',
-                    start_date.strftime('%Y%m%d'),
-                    end_date.strftime('%Y%m%d')
-                )
-                
-                # Organizar por data
-                for _, candle in candles.iterrows():
-                    date = candle['datetime'].date()
-                    if date not in collected:
-                        collected[date] = {}
-                    if 'candles' not in collected[date]:
-                        collected[date]['candles'] = []
-                    collected[date]['candles'].append(candle.to_dict())
             
         finally:
             conn.disconnect()
@@ -520,6 +602,34 @@ class HistoricalDataCollector:
         return self._merge_all_data(
             symbol, start_date, end_date, data_types, {}, {}
         )
+    
+    def get_available_data(self) -> Dict[str, List[str]]:
+        """Retorna informações sobre dados disponíveis"""
+        try:
+            available = {}
+            
+            # Listar todos os arquivos parquet
+            for file in self.data_dir.glob("*/*.parquet"):
+                parts = file.parent.name.split('_')
+                if len(parts) >= 1:
+                    symbol = parts[0]
+                    date = file.parent.name
+                    
+                    if symbol not in available:
+                        available[symbol] = []
+                    
+                    if date not in available[symbol]:
+                        available[symbol].append(date)
+            
+            # Ordenar datas
+            for symbol in available:
+                available[symbol] = sorted(available[symbol])
+            
+            return available
+            
+        except Exception as e:
+            self.logger.error(f"Erro listando dados: {e}")
+            return {}
     
     def get_data_summary(self, symbol: str) -> Dict:
         """Retorna resumo dos dados disponíveis"""

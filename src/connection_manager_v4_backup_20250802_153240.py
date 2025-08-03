@@ -70,10 +70,6 @@ class ConnectionManagerV4:
         self.order_callbacks = []
         self.account_callbacks = []
         
-        # Callbacks de book em tempo real
-        self._offer_book_callback = None
-        self._price_book_callback = None
-        
         # Contadores para debug
         self._historical_data_count = 0
         self._last_historical_timestamp = None
@@ -256,10 +252,8 @@ class ConnectionManagerV4:
                 for callback in self.state_callbacks:
                     callback(nConnStateType, nResult)
                     
-                return 0
             except Exception as e:
                 self.logger.error(f"Erro no state callback: {e}")
-                return 0
         
         # Trade callback (tempo real) - assinatura v4.0.0.30
         @TNewTradeCallback
@@ -282,10 +276,8 @@ class ConnectionManagerV4:
                 for callback in self.trade_callbacks:
                     callback(trade_data)
                     
-                return 0
             except Exception as e:
                 self.logger.error(f"Erro no trade callback: {e}")
-                return 0
         
         # History trade callback - assinatura v4.0.0.30
         @THistoryTradeCallback
@@ -312,6 +304,7 @@ class ConnectionManagerV4:
                             timestamp = datetime.now()
                     else:
                         timestamp = datetime.now()
+                        
                 except Exception as e:
                     timestamp = datetime.now()
                 
@@ -355,11 +348,9 @@ class ConnectionManagerV4:
                         'trade_number': int(trade_number),
                         'is_historical': True
                     })
-                
-                return 0
+                    
             except Exception as e:
                 self.logger.error(f"Erro no history callback: {e}")
-                return 0
         
         # Progress callback - assinatura v4.0.0.30
         @TProgressCallback
@@ -372,63 +363,22 @@ class ConnectionManagerV4:
                 if progress >= 100:
                     self.logger.info(f"✅ Download de {ticker_name} completo!")
                     
-                return 0
             except Exception as e:
                 self.logger.error(f"Erro no progress callback: {e}")
-                return 0
         
         # Book callbacks - assinaturas v4.0.0.30
         @TOfferBookCallback
         def offer_book_callback(asset_id, broker_id, position, side, volume, 
                                quantity, offer_id, price, has_price, has_quantity,
                                has_date, has_offer_id, is_edit, date, book_array, reserved):
-            """Callback para book de ofertas em tempo real"""
-            try:
-                if self._offer_book_callback:
-                    book_data = {
-                        'timestamp': datetime.now().strftime('%d/%m/%Y %H:%M:%S.%f')[:-3],
-                        'ticker': asset_id.pwcTicker if hasattr(asset_id, 'pwcTicker') else '',
-                        'broker_id': broker_id,
-                        'position': position,
-                        'side': side,  # 0=Buy, 1=Sell
-                        'volume': volume,
-                        'quantity': quantity,
-                        'offer_id': offer_id,
-                        'price': price,
-                        'has_price': bool(has_price),
-                        'has_quantity': bool(has_quantity),
-                        'has_date': bool(has_date),
-                        'has_offer_id': bool(has_offer_id),
-                        'is_edit': bool(is_edit),
-                        'date': date if has_date else ''
-                    }
-                    self._offer_book_callback(book_data)
-                return 0
-            except Exception as e:
-                self.logger.error(f"Erro no callback de offer book: {e}")
-                return 0
+            # Por enquanto, apenas pass
+            pass
         
         @TPriceBookCallback
         def price_book_callback(asset_id, position, side, order_count, quantity,
                                display_quantity, price, book_array, reserved):
-            """Callback para book de preços agregado em tempo real"""
-            try:
-                if self._price_book_callback:
-                    book_data = {
-                        'timestamp': datetime.now().strftime('%d/%m/%Y %H:%M:%S.%f')[:-3],
-                        'ticker': asset_id.pwcTicker if hasattr(asset_id, 'pwcTicker') else '',
-                        'position': position,
-                        'side': side,  # 0=Buy, 1=Sell
-                        'order_count': order_count,
-                        'quantity': quantity,
-                        'display_quantity': display_quantity,
-                        'price': price
-                    }
-                    self._price_book_callback(book_data)
-                return 0
-            except Exception as e:
-                self.logger.error(f"Erro no callback de price book: {e}")
-                return 0
+            # Por enquanto, apenas pass
+            pass
         
         # Order callbacks (versão antiga para compatibilidade na inicialização)
         # Serão substituídos pelos V2 após inicialização
@@ -467,10 +417,8 @@ class ConnectionManagerV4:
                 for callback in self.account_callbacks:
                     callback(account_data)
                     
-                return 0
             except Exception as e:
                 self.logger.error(f"Erro no account callback: {e}")
-                return 0
         
         # Armazenar callbacks
         self.callbacks = {
@@ -1087,130 +1035,6 @@ class ConnectionManagerV4:
                 
         except Exception as e:
             self.logger.error(f"Erro ao obter informações de conta: {e}")
-            return False
-    
-    def register_offer_book_callback(self, callback):
-        """
-        Registra callback para receber dados de book de ofertas em tempo real
-        
-        Args:
-            callback: Função que recebe dict com dados do book
-        """
-        self._offer_book_callback = callback
-        self.logger.info("Callback de offer book registrado")
-    
-    def register_price_book_callback(self, callback):
-        """
-        Registra callback para receber dados de book de preços agregado em tempo real
-        
-        Args:
-            callback: Função que recebe dict com dados do book
-        """
-        self._price_book_callback = callback
-        self.logger.info("Callback de price book registrado")
-    
-    def subscribe_offer_book(self, ticker: str) -> bool:
-        """
-        Subscreve ao book de ofertas de um ticker
-        
-        Args:
-            ticker: Ticker do ativo
-            
-        Returns:
-            bool: True se subscrição bem-sucedida
-        """
-        try:
-            if not self.dll or not self.connected:
-                self.logger.error("DLL não está conectada")
-                return False
-            
-            # Verificar se market data está conectado
-            if self.market_state != self.MARKET_CONNECTED:
-                self.logger.error("Market data não conectado - necessário para book")
-                return False
-            
-            # SubscribeOfferBook(pwcTicker, pwcBolsa, nFeed)
-            result = self.dll.SubscribeOfferBook(
-                c_wchar_p(ticker),  # Ticker
-                c_wchar_p("F"),     # Bolsa (F=Futuros)
-                c_int(0)            # Feed (0=default)
-            )
-            
-            if result == NResult.NL_OK:
-                self.logger.info(f"✅ Subscrito ao offer book de {ticker}")
-                return True
-            else:
-                self.logger.error(f"Erro ao subscrever offer book: {result}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Erro ao subscrever offer book: {e}")
-            return False
-    
-    def subscribe_price_book(self, ticker: str) -> bool:
-        """
-        Subscreve ao book de preços agregado de um ticker
-        
-        Args:
-            ticker: Ticker do ativo
-            
-        Returns:
-            bool: True se subscrição bem-sucedida
-        """
-        try:
-            if not self.dll or not self.connected:
-                self.logger.error("DLL não está conectada")
-                return False
-            
-            # Verificar se market data está conectado
-            if self.market_state != self.MARKET_CONNECTED:
-                self.logger.error("Market data não conectado - necessário para book")
-                return False
-            
-            # SubscribePriceBook(pwcTicker, pwcBolsa)
-            result = self.dll.SubscribePriceBook(
-                c_wchar_p(ticker),  # Ticker
-                c_wchar_p("F")      # Bolsa (F=Futuros)
-            )
-            
-            if result == NResult.NL_OK:
-                self.logger.info(f"✅ Subscrito ao price book de {ticker}")
-                return True
-            else:
-                self.logger.error(f"Erro ao subscrever price book: {result}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Erro ao subscrever price book: {e}")
-            return False
-    
-    def unsubscribe_offer_book(self, ticker: str) -> bool:
-        """
-        Cancela subscrição do book de ofertas
-        """
-        try:
-            result = self.dll.UnsubscribeOfferBook(
-                c_wchar_p(ticker),
-                c_wchar_p("F"),
-                c_int(0)
-            )
-            return result == NResult.NL_OK
-        except Exception as e:
-            self.logger.error(f"Erro ao cancelar offer book: {e}")
-            return False
-    
-    def unsubscribe_price_book(self, ticker: str) -> bool:
-        """
-        Cancela subscrição do book de preços
-        """
-        try:
-            result = self.dll.UnsubscribePriceBook(
-                c_wchar_p(ticker),
-                c_wchar_p("F")
-            )
-            return result == NResult.NL_OK
-        except Exception as e:
-            self.logger.error(f"Erro ao cancelar price book: {e}")
             return False
         
     def _validate_market_data(self, data: Dict) -> bool:

@@ -6,8 +6,6 @@ Este arquivo contém todas as estruturas ctypes necessárias para
 integração completa com a ProfitDLL versão 4.0.0.30
 """
 
-# CORREÇÃO APLICADA: Todos callbacks retornam c_int para evitar crashes
-
 from ctypes import (
     Structure, Union, c_int, c_double, c_wchar_p, c_longlong, 
     c_char, c_uint, c_void_p, c_bool, c_byte, POINTER, WINFUNCTYPE
@@ -294,11 +292,11 @@ class TConnectorTrade(Structure):
 # =============================================================================
 
 # Callback de estado de conexão
-TStateCallback = WINFUNCTYPE(c_int, c_int, c_int)
+TStateCallback = WINFUNCTYPE(None, c_int, c_int)
 
 # Callback de trades em tempo real
 TNewTradeCallback = WINFUNCTYPE(
-    c_int, 
+    None, 
     TAssetID,      # Asset
     c_wchar_p,     # Date
     c_uint,        # TradeNumber
@@ -313,7 +311,7 @@ TNewTradeCallback = WINFUNCTYPE(
 
 # Callback de histórico de trades
 THistoryTradeCallback = WINFUNCTYPE(
-    c_int,
+    None,
     TAssetID,      # Asset
     c_wchar_p,     # Date
     c_uint,        # TradeNumber
@@ -326,11 +324,11 @@ THistoryTradeCallback = WINFUNCTYPE(
 )
 
 # Callback de progresso
-TProgressCallback = WINFUNCTYPE(c_int, TAssetID, c_int)
+TProgressCallback = WINFUNCTYPE(None, TAssetID, c_int)
 
 # Callback de conta
 TAccountCallback = WINFUNCTYPE(
-    c_int,
+    None,
     c_int,         # BrokerID
     c_wchar_p,     # AccountID
     c_wchar_p,     # AccountName
@@ -339,19 +337,19 @@ TAccountCallback = WINFUNCTYPE(
 
 # Callback de ordens - v4.0.0.30
 TConnectorOrderCallback = WINFUNCTYPE(
-    c_int,
+    None,
     POINTER(TConnectorOrderOut)  # Ponteiro para estrutura de ordem
 )
 
 # Callback de histórico de ordens
 TConnectorAccountCallback = WINFUNCTYPE(
-    c_int,
+    None,
     POINTER(TConnectorAccountIdentifier)  # Conta processada
 )
 
 # Callback de book de preços
 TPriceBookCallback = WINFUNCTYPE(
-    c_int,
+    None,
     TAssetID,      # Asset
     c_int,         # Position
     c_int,         # Side
@@ -365,7 +363,7 @@ TPriceBookCallback = WINFUNCTYPE(
 
 # Callback de book de ofertas
 TOfferBookCallback = WINFUNCTYPE(
-    c_int,
+    None,
     TAssetID,      # Asset
     c_int,         # BrokerID
     c_int,         # Position
@@ -386,7 +384,7 @@ TOfferBookCallback = WINFUNCTYPE(
 
 # Callback para mudanças na lista de ativos com posição
 TConnectorAssetPositionListCallback = WINFUNCTYPE(
-    c_int,
+    None,
     POINTER(TConnectorAccountIdentifier),  # AccountID
     c_int  # ChangeType: 0=Added, 1=Removed, 2=Changed
 )
@@ -407,7 +405,7 @@ TConnectorEnumerateAssetProc = WINFUNCTYPE(
 
 # Callback para trades v2
 TConnectorTradeCallback = WINFUNCTYPE(
-    c_int,
+    None,
     POINTER(c_void_p)  # Ponteiro para dados do trade (usar TranslateTrade)
 )
 
