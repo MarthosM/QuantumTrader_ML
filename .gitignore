@@ -187,3 +187,59 @@ config.ini
 # Trading specific
 historical_data/
 backtest_results/
+
+# QuantumTrader ML specific
+# Dados temporários
+data/realtime/
+data/historical/*
+!data/historical/.gitkeep
+data/temp/
+temp/
+tmp/
+
+# Resultados e relatórios temporários
+results/
+reports/
+cleanup_report_*.json
+
+# Backups
+backup*/
+archive/
+*_backup*
+*_old*
+*.bak
+
+# Arquivos temporários do sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+nul
+
+# Scripts de teste temporários no raiz
+test_*.py
+debug_*.py
+diagnose_*.py
+create_*.py
+prepare_*.py
+analyze_*.py
+backtest_*.py
+ml_backtest*.py
+quick_*.py
+# Exceções importantes
+!test_connection.py
+!create_models.py
+!tests/test_*.py
+
+# Scripts temporários em scripts/
+scripts/temp_*.py
+scripts/test_*.py
+!scripts/test_book_collection.py
+!scripts/test_valkey_connection.py
+
+# Documentação temporária
+docs/temp/
+docs/draft/
+
+# Arquivos grandes
+*.parquet
+!examples/*.parquet

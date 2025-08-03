@@ -13,9 +13,9 @@ warnings.filterwarnings('ignore')
 # Import ta library for technical indicators
 import ta
 
-from data_structure import TradingDataStructure
-from technical_indicators import TechnicalIndicators
-from ml_features import MLFeatures
+from src.data_structure import TradingDataStructure
+from src.technical_indicators import TechnicalIndicators
+from src.ml_features import MLFeatures
 
 
 class ProductionDataValidator:

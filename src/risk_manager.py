@@ -7,7 +7,7 @@ from typing import Dict, Tuple, List, Optional
 from datetime import datetime, timedelta
 import logging
 import pandas as pd
-from intelligent_risk_manager import IntelligentRiskManager  # Importar o novo gerenciador de risco
+# from intelligent_risk_manager import IntelligentRiskManager  # Importar o novo gerenciador de risco - TEMPORARIAMENTE DESATIVADO
 
 
 class RiskManager:

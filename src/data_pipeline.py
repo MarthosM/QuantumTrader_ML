@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
-from data_structure import TradingDataStructure
+from src.data_structure import TradingDataStructure
 
 
 class DataPipeline:

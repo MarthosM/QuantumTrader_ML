@@ -6,8 +6,8 @@ from enum import Enum
 import threading
 import queue
 from dataclasses import dataclass
-from profit_dll_structures import (
-    OrderSide, OrderType, NResult,
+from src.profit_dll_structures import (
+    OrderSide as ProfitOrderSide, OrderType as ProfitOrderType, NResult,
     create_account_identifier, create_send_order
 )
 

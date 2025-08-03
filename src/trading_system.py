@@ -17,28 +17,28 @@ import pandas as pd
 from ctypes import c_double
 
 # Importar componentes desenvolvidos nas etapas anteriores
-from connection_manager_v4 import ConnectionManagerV4 as ConnectionManager
-from model_manager import ModelManager
-from data_structure import TradingDataStructure
-from data_pipeline import DataPipeline
-from real_time_processor import RealTimeProcessor
-from data_loader import DataLoader
-from feature_engine import FeatureEngine
-from prediction_engine import PredictionEngine
-from ml_coordinator import MLCoordinator
-from signal_generator import SignalGenerator
-from risk_manager import RiskManager
-from strategy_engine import StrategyEngine
-from metrics_collector import MetricsCollector
+from src.connection_manager_v4 import ConnectionManagerV4 as ConnectionManager
+from src.model_manager import ModelManager
+from src.data_structure import TradingDataStructure
+from src.data_pipeline import DataPipeline
+from src.real_time_processor import RealTimeProcessor
+from src.data_loader import DataLoader
+from src.feature_engine import FeatureEngine
+from src.prediction_engine import PredictionEngine
+from src.ml_coordinator import MLCoordinator
+from src.signal_generator import SignalGenerator
+from src.risk_manager import RiskManager
+from src.strategy_engine import StrategyEngine
+from src.metrics_collector import MetricsCollector
 
 # Adicionar integração para dados reais
-from data_integration import DataIntegration
+from src.data_integration import DataIntegration
 
 # Importar sistema de execução de ordens
 try:
-    from order_manager_v4 import OrderExecutionManagerV4 as OrderExecutionManager
-    from execution_engine import SimpleExecutionEngine
-    from execution_integration_simple import ExecutionIntegration
+    from src.order_manager_v4 import OrderExecutionManagerV4 as OrderExecutionManager
+    from src.execution_engine import SimpleExecutionEngine
+    from src.execution_integration_simple import ExecutionIntegration
     ORDER_EXECUTION_AVAILABLE = True
 except ImportError:
     # Componentes de execução não disponíveis
@@ -49,9 +49,9 @@ except ImportError:
 
 # Importar componentes das ETAPAS 4 e 5 (opcionais)
 try:
-    from ml.continuous_optimizer import ContinuousOptimizationPipeline, AutoOptimizationEngine
-    from monitoring.performance_monitor import RealTimePerformanceMonitor
-    from risk.intelligent_risk_manager import IntelligentRiskManager
+    from src.ml.continuous_optimizer import ContinuousOptimizationPipeline, AutoOptimizationEngine
+    from src.monitoring.performance_monitor import RealTimePerformanceMonitor
+    # from risk.intelligent_risk_manager import IntelligentRiskManager  # TEMPORARIAMENTE DESATIVADO
     ADVANCED_FEATURES_AVAILABLE = True
 except ImportError:
     # Componentes avançados não disponíveis
