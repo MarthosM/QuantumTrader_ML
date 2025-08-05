@@ -8,7 +8,7 @@ import time
 import os
 import traceback
 from typing import Dict, Optional, Callable, Any, List
-from ctypes import WINFUNCTYPE, WinDLL, c_int, c_wchar_p, c_double, c_uint, c_char, c_longlong, c_void_p, POINTER, byref
+from ctypes import WINFUNCTYPE, WinDLL, c_int, c_int32, c_wchar_p, c_double, c_uint, c_char, c_longlong, c_void_p, POINTER, byref
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -203,14 +203,19 @@ class ConnectionManagerV4:
             return False
     
     def _load_dll(self) -> Optional[WinDLL]:
-        """Carrega a DLL do Profit"""
+        """Carrega a DLL do Profit usando WinDLL (stdcall)"""
         try:
             if not os.path.exists(self.dll_path):
                 self.logger.error(f"DLL não encontrada em: {self.dll_path}")
                 return None
                 
+            # IMPORTANTE: Usar WinDLL para convenção stdcall
             dll = WinDLL(self.dll_path)
-            self.logger.info("DLL carregada com sucesso")
+            self.logger.info("[OK] DLL carregada com WinDLL (stdcall)")
+            
+            # Configurar argtypes (não definir globalmente)
+            dll.argtypes = None
+            
             return dll
             
         except Exception as e:

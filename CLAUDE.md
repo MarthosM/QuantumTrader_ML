@@ -224,6 +224,15 @@ def test_integration():
     result = system.process(real_data)
 ```
 
+### Module Management
+When multiple versions of a module exist for the same functionality:
+1. **Test thoroughly** to identify the working version
+2. **Delete non-working versions** once a working version is confirmed
+3. **Keep only the best implementation** to avoid confusion
+4. **Document the decision** in commit messages
+
+Example: If `book_collector_fixed_callbacks.py` works better than `book_collector_wdo_hmarl.py`, delete the non-working version and keep only the working one.
+
 ## 📈 Performance Targets
 
 ### System Performance

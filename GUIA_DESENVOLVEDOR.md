@@ -596,7 +596,719 @@ except Exception as e:
 - **Sistema de Treinamento**: `SISTEMA_TREINAMENTO_INTEGRADO.md`
 - **Developer Guide**: `DEVELOPER_GUIDE.md`
 
+## 🆕 Atualizações Recentes (Agosto 2025)
+
+### Sistema de Coleta de Book de Ofertas
+**Status**: ✅ Implementado e otimizado (04/08/2025)
+
+#### Componentes Principais:
+
+1. **BookCollectorFinalSolution** (`book_collector_final_solution.py`)
+   - Versão mais robusta e estável
+   - Suporta múltiplos tickers simultaneamente
+   - Não trava durante coleta
+   - Salva dados em JSON e Parquet
+   - Re-registra callbacks após login (crítico!)
+
+2. **Callbacks Implementados**:
+   ```python
+   # TinyBook - Dados agregados de mercado
+   @WINFUNCTYPE(None, c_wchar_p, c_wchar_p, c_double, c_int, c_int)
+   def tinyBookCallback(ticker, bolsa, price, qtd, side)
+   
+   # OfferBook - Livro de ofertas detalhado
+   @WINFUNCTYPE(None, c_wchar_p, c_wchar_p, c_int, c_int, c_int, c_int, c_int, c_longlong, c_double, ...)
+   def offerBookCallback(ticker, bolsa, nAction, nPosition, Side, nQtd, ...)
+   
+   # Trade - Negócios realizados
+   @WINFUNCTYPE(None, c_wchar_p, c_double, c_int, c_int, c_int)
+   def tradeCallback(ticker, price, qty, buyer, seller)
+   ```
+
+3. **Estrutura de Dados Coletados**:
+   ```python
+   {
+       'type': 'tiny_book/offer_book/trade',
+       'ticker': str,
+       'side': 'bid/ask',
+       'price': float,
+       'quantity': int,
+       'timestamp': datetime.isoformat()
+   }
+   ```
+
+4. **Scripts de Coleta**:
+   - `book_collector_final_solution.py` - Versão principal para produção
+   - `book_collector_minimal_working.py` - Versão simplificada para debug
+   - `scripts/book_collector.py` - Interface original (mantida para compatibilidade)
+
+**Importante**: 
+- Executar apenas durante horário de pregão (seg-sex, 9h-18h)
+- ProfitDLL não fornece book histórico, apenas real-time
+- Callbacks devem ser re-registrados APÓS login com SetOfferBookCallbackV2()
+
+### Sistema de Treinamento Dual (CSV/Tick + Book)
+**Status**: ✅ Implementado com integração HMARL
+
+O sistema suporta dois modos de treinamento complementares para uma estratégia completa:
+
+#### 1. Treinamento com Dados CSV (Tick/OHLCV)
+**Objetivo**: Capturar tendências de médio/longo prazo e padrões técnicos
+
+```python
+from src.training.training_orchestrator import TrainingOrchestrator
+
+# Configuração para dados CSV
+config = {
+    'data_path': 'data/csv/',  # Arquivos CSV com OHLCV
+    'model_save_path': 'models/tick_models/',
+    'features': {
+        'technical': True,      # RSI, MACD, Bollinger, etc
+        'regime': True,         # Detecção de regime
+        'momentum': True,       # Features de momentum
+        'volatility': True      # Features de volatilidade
+    }
+}
+
+# Treinar modelos
+orchestrator = TrainingOrchestrator(config)
+results = orchestrator.train_from_csv(
+    csv_file='data/csv/WDOU25_2024_2025.csv',
+    lookback_days=365,  # 1 ano de dados
+    target='direction'   # Prever direção do movimento
+)
+```
+
+**Features CSV/Tick** (~100 features):
+- Indicadores técnicos clássicos
+- Padrões de candlestick
+- Análise de volume
+- Detecção de suporte/resistência
+- Regime de mercado (trend/range)
+
+#### 2. Treinamento com Book de Ofertas
+**Objetivo**: Capturar microestrutura e fluxo de ordens para timing preciso
+
+```python
+from src.training.book_training_pipeline import BookTrainingPipeline
+
+# Configuração para dados de book
+config = {
+    'data_path': 'data/realtime/book/',
+    'model_save_path': 'models/book_models/',
+    'features': {
+        'order_flow': True,     # OFI, delta, absorção
+        'liquidity': True,      # Profundidade, spread
+        'microstructure': True, # Kyle's Lambda, PIN
+        'patterns': True        # Iceberg, sweep, spoofing
+    }
+}
+
+# Treinar modelos de book
+pipeline = BookTrainingPipeline(config)
+results = pipeline.train_book_models(
+    start_date='2025-07-01',
+    end_date='2025-08-01',
+    targets=['spread_change', 'price_move_1min', 'order_imbalance']
+)
+```
+
+**Features Book** (~80 features):
+- Order Flow Imbalance (OFI)
+- Volume delta por nível
+- Microestrutura de preços
+- Padrões de execução
+- Métricas de liquidez
+
+#### 3. Sistema Dual Integrado
+**Combina ambos para decisões completas**
+
+```python
+from src.training.dual_training_system import DualTrainingSystem
+
+# Sistema completo
+dual_system = DualTrainingSystem({
+    'tick_config': {...},    # Config para CSV/tick
+    'book_config': {...},    # Config para book
+    'ensemble_method': 'weighted',  # Como combinar
+    'hmarl_integration': True       # Usar HMARL
+})
+
+# Treinar ambos os modelos
+results = dual_system.train_complete_system(
+    csv_files=['WDOU25_2024.csv', 'WDOU25_2025.csv'],
+    book_data_path='data/realtime/book/',
+    validation_split=0.2
+)
+
+# Resultados incluem:
+# - Modelos de tendência (tick)
+# - Modelos de microestrutura (book)
+# - Pesos de ensemble
+# - Métricas por regime
+```
+
+#### 4. Preparação de Dados
+
+**Para CSV/Tick**:
+```bash
+# Preparar CSV para ML
+python prepare_csv_for_ml.py --input data/raw/WDOU25.csv --output data/csv/
+
+# Estrutura esperada do CSV:
+# timestamp, open, high, low, close, volume
+```
+
+**Para Book**:
+```bash
+# Coletar book durante pregão
+python book_collector_final_solution.py
+
+# Processar book coletado
+python scripts/process_book_data.py --date 2025-08-05
+```
+
+#### 5. Validação Pré-Treinamento
+
+```bash
+# Validar dados antes de treinar
+python scripts/pre_training_validation.py
+
+# Checa:
+# ✓ Dados CSV disponíveis e válidos
+# ✓ Dados de book coletados
+# ✓ Features calculáveis
+# ✓ Sem gaps temporais
+# ✓ Qualidade dos dados
+```
+
+### Integração HMARL (Hierarchical Multi-Agent RL)
+**Status**: ✅ Sistema completo implementado
+
+O HMARL integra múltiplos agentes especializados para análise de microestrutura e fluxo de ordens, complementando o sistema ML tradicional.
+
+#### Arquitetura HMARL
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Sistema Principal                  │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────┐ │
+│  │ ML Models   │  │ Book Collector│  │ ProfitDLL  │ │
+│  └──────┬──────┘  └───────┬──────┘  └──────┬─────┘ │
+│         │                  │                 │       │
+│         └──────────────────┴─────────────────┘       │
+│                           │                          │
+│                    ┌──────▼──────┐                  │
+│                    │ HMARL Bridge│                  │
+│                    └──────┬──────┘                  │
+└───────────────────────────┼─────────────────────────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        │                  ▼                  │
+        │         Flow Coordinator            │
+        │  ┌────────┐  ┌────────┐  ┌────────┐│
+        │  │Agent 1 │  │Agent 2 │  │Agent N ││
+        │  └────────┘  └────────┘  └────────┘│
+        │         │        │         │        │
+        │         └────────┼─────────┘        │
+        │                  ▼                  │
+        │            Consensus                │
+        │             Engine                  │
+        └─────────────────────────────────────┘
+```
+
+#### 1. Componentes Principais
+
+**HMARLMLBridge** (`src/infrastructure/hmarl_ml_integration.py`)
+```python
+class HMARLMLBridge:
+    def __init__(self, ml_system, config):
+        self.flow_analyzer = OrderFlowAnalyzer()
+        self.footprint_tracker = FootprintTracker()
+        self.agents = self._initialize_agents()
+        
+    def intercept_book_callback(self, book_data):
+        # Processa book e distribui para agentes
+        flow_features = self.flow_analyzer.analyze(book_data)
+        footprint = self.footprint_tracker.update(book_data)
+        
+        # Broadcast para agentes via ZMQ
+        self.broadcast_to_agents({
+            'book': book_data,
+            'flow': flow_features,
+            'footprint': footprint
+        })
+```
+
+**FlowAwareCoordinator** (`src/coordination/flow_aware_coordinator.py`)
+```python
+class FlowAwareCoordinator:
+    def __init__(self, valkey_client):
+        self.agents = {}
+        self.consensus_engine = ConsensusEngine()
+        self.signal_quality_scorer = SignalQualityScorer()
+        
+    def coordinate_decision(self, ml_signal, agent_signals):
+        # Combina ML tradicional com insights dos agentes
+        consensus = self.consensus_engine.evaluate({
+            'ml_signal': ml_signal,
+            'agent_signals': agent_signals
+        })
+        
+        # Score de qualidade final
+        quality_score = self.signal_quality_scorer.score(
+            consensus, 
+            market_context=self.get_market_context()
+        )
+        
+        return {
+            'action': consensus['action'],
+            'confidence': consensus['confidence'] * quality_score,
+            'agent_consensus': consensus['agreement_level']
+        }
+```
+
+#### 2. Agentes Especializados
+
+**OrderFlowSpecialist** (`src/agents/order_flow_specialist.py`)
+- Analisa Order Flow Imbalance (OFI)
+- Detecta momentum de compra/venda
+- Identifica absorção em níveis chave
+
+**LiquiditySpecialist** (`src/agents/liquidity_specialist.py`)
+- Monitora profundidade do book
+- Calcula métricas de liquidez
+- Detecta mudanças súbitas de liquidez
+
+**TapeReadingAgent** (`src/agents/tape_reading_agent.py`)
+- Analisa velocidade de execução
+- Identifica padrões de agressão
+- Detecta icebergs e hidden orders
+
+**FootprintAgent** (`src/agents/footprint_agent.py`)
+- Rastreia volume por preço
+- Identifica níveis de absorção
+- Mapeia zonas de interesse institucional
+
+#### 3. Infraestrutura de Comunicação
+
+**Portas ZMQ**:
+```python
+PORTS = {
+    'tick_data': 5555,      # Dados de trades
+    'order_book': 5556,     # Book completo
+    'flow_analysis': 5557,  # Análise de fluxo
+    'footprint': 5558,      # Dados de footprint
+    'liquidity': 5559,      # Métricas de liquidez
+    'tape_reading': 5560,   # Tape reading
+    'consensus': 5561       # Decisões consensuais
+}
+```
+
+**Valkey/Redis Storage**:
+```python
+# Estrutura de streams
+STREAMS = {
+    'book:WDOU25': TTL(300),      # 5min de book
+    'flow:WDOU25': TTL(600),      # 10min de flow
+    'footprint:WDOU25': TTL(1800), # 30min footprint
+    'signals:*': TTL(3600)         # 1h de sinais
+}
+
+# Time-travel queries
+valkey.xrange('book:WDOU25', min='-', max='+', count=1000)
+```
+
+#### 4. Integração com Sistema Principal
+
+```python
+# Exemplo de uso completo
+from examples.hmarl_integrated_trading import HMARLIntegratedTrading
+
+# Configuração
+config = {
+    'ml_models_path': 'models/',
+    'hmarl': {
+        'agents': ['order_flow', 'liquidity', 'tape_reading', 'footprint'],
+        'consensus_threshold': 0.7,
+        'valkey_host': 'localhost',
+        'valkey_port': 6379
+    },
+    'trading': {
+        'symbol': 'WDOU25',
+        'risk_per_trade': 0.02
+    }
+}
+
+# Inicializar sistema integrado
+system = HMARLIntegratedTrading(config)
+system.initialize()
+
+# Sistema agora usa:
+# 1. Modelos ML para tendência (CSV/tick data)
+# 2. Modelos de book para microestrutura
+# 3. Agentes HMARL para consenso e validação
+# 4. Coordenador para decisão final
+
+system.start_trading()
+```
+
+#### 5. Fluxo de Decisão HMARL
+
+1. **Coleta de Dados**:
+   - Book collector alimenta HMARL Bridge
+   - Bridge processa e distribui para agentes
+
+2. **Análise Paralela**:
+   - Cada agente analisa sua especialidade
+   - Resultados enviados ao coordenador
+
+3. **Consenso**:
+   - Coordenador combina sinais ML + agentes
+   - Engine calcula nível de concordância
+   - Quality scorer valida contexto
+
+4. **Execução**:
+   - Sinal final com alta confiança executado
+   - Feedback registrado para aprendizado
+
+#### 6. Monitoramento HMARL
+
+```bash
+# Dashboard de agentes
+python scripts/hmarl_dashboard.py
+
+# Métricas por agente
+python scripts/agent_performance.py --agent order_flow
+
+# Análise de consenso
+python scripts/consensus_analysis.py --date 2025-08-04
+```
+
+### Scripts de Validação Pré-Treinamento
+**Status**: ✅ Implementados
+
+1. **check_historical_data.py** - Valida dados tick históricos
+2. **check_book_data.py** - Valida dados de book coletados
+3. **setup_directories.py** - Cria estrutura necessária
+4. **pre_training_validation.py** - Validação completa do sistema
+
+### Comandos e Exemplos Práticos
+
+#### 1. Coleta de Dados
+
+**Coletar Book de Ofertas (Durante Pregão)**:
+```bash
+# Coletor principal - mais estável
+python book_collector_final_solution.py
+
+# Coletor com interface amigável
+python scripts/book_collector.py --symbol WDOU25 --duration 3600
+
+# Coletor mínimo para debug
+python book_collector_minimal_working.py
+```
+
+**Verificar Dados Coletados**:
+```bash
+# Verificar book coletado
+python scripts/check_book_data.py --date 2025-08-05
+
+# Verificar dados históricos CSV
+python scripts/check_historical_data.py --symbol WDOU25
+```
+
+#### 2. Preparação de Dados
+
+**Preparar CSV para ML**:
+```bash
+# Converter CSV bruto para formato ML
+python prepare_csv_for_ml.py \
+    --input data/raw/WDOU25_2024.csv \
+    --output data/csv/WDOU25_2024_ml.csv \
+    --add-features true
+
+# Validar qualidade dos dados
+python scripts/validate_data_quality.py --file data/csv/WDOU25_2024_ml.csv
+```
+
+**Processar Book Coletado**:
+```bash
+# Agregar book em candles de 1min
+python scripts/process_book_data.py \
+    --date 2025-08-05 \
+    --output data/processed/book_features_20250805.parquet
+
+# Gerar features de microestrutura
+python scripts/generate_book_features.py \
+    --input data/realtime/book/20250805/ \
+    --output data/features/book/
+```
+
+#### 3. Treinamento de Modelos
+
+**Treinar Modelo com CSV (Tendências)**:
+```python
+from src.training.training_orchestrator import TrainingOrchestrator
+
+# Configuração básica
+config = {
+    'data_path': 'data/csv/',
+    'model_save_path': 'models/tick/',
+    'validation_split': 0.2,
+    'walk_forward_windows': 5
+}
+
+# Treinar
+orchestrator = TrainingOrchestrator(config)
+results = orchestrator.train_from_csv(
+    csv_file='data/csv/WDOU25_2024_ml.csv',
+    lookback_days=365,
+    models=['xgboost', 'lightgbm', 'random_forest']
+)
+
+print(f"Melhor modelo: {results['best_model']}")
+print(f"Accuracy: {results['metrics']['accuracy']:.2%}")
+```
+
+**Treinar Modelo com Book (Microestrutura)**:
+```python
+from src.training.book_training_pipeline import BookTrainingPipeline
+
+# Configuração para book
+config = {
+    'data_path': 'data/realtime/book/',
+    'model_save_path': 'models/book/',
+    'min_samples': 10000,
+    'imbalance_threshold': 0.7
+}
+
+# Treinar múltiplos targets
+pipeline = BookTrainingPipeline(config)
+results = pipeline.train_book_models(
+    start_date='2025-07-01',
+    end_date='2025-08-01',
+    targets=['spread_change', 'price_move_1min', 'order_imbalance']
+)
+
+# Resultados por target
+for target, metrics in results.items():
+    print(f"\n{target}: R² = {metrics['r2']:.3f}")
+```
+
+**Sistema Dual Completo**:
+```bash
+# Script automatizado
+python examples/train_dual_models.py \
+    --symbol WDOU25 \
+    --csv-lookback 365 \
+    --book-lookback 30 \
+    --output models/dual/
+
+# Ou via código
+from src.training.dual_training_system import DualTrainingSystem
+
+system = DualTrainingSystem({
+    'tick_config': {
+        'lookback_days': 365,
+        'features': ['technical', 'regime', 'momentum']
+    },
+    'book_config': {
+        'lookback_days': 30,
+        'features': ['order_flow', 'liquidity', 'microstructure']
+    },
+    'ensemble_method': 'stacking',
+    'hmarl_integration': True
+})
+
+results = system.train_complete_system(
+    csv_files=['data/csv/WDOU25_2024.csv', 'data/csv/WDOU25_2025.csv'],
+    book_data_path='data/realtime/book/'
+)
+```
+
+#### 4. Trading com Sistema Completo
+
+**Trading Básico (Sem HMARL)**:
+```python
+from src.trading_system import TradingSystem
+
+config = {
+    'dll_path': './ProfitDLL64.dll',
+    'username': 'seu_usuario',
+    'password': 'sua_senha',
+    'models_dir': 'models/dual/',
+    'use_book_features': True,
+    'ml_interval': 60
+}
+
+system = TradingSystem(config)
+system.initialize()
+system.start('WDOU25')
+```
+
+**Trading com HMARL**:
+```python
+from examples.hmarl_integrated_trading import HMARLIntegratedTrading
+
+config = {
+    'base_config': {...},  # Config do sistema base
+    'hmarl': {
+        'agents': ['order_flow', 'liquidity', 'tape_reading'],
+        'consensus_threshold': 0.7,
+        'valkey_host': 'localhost'
+    }
+}
+
+system = HMARLIntegratedTrading(config)
+system.initialize()
+system.start_trading('WDOU25')
+```
+
+#### 5. Backtesting
+
+**Backtest com Dados CSV**:
+```bash
+python src/ml_backtester.py \
+    --model models/tick/xgboost_20250804.pkl \
+    --data data/csv/WDOU25_test.csv \
+    --start 2025-01-01 \
+    --end 2025-07-31
+```
+
+**Backtest com Book (Replay)**:
+```python
+from src.backtesting.book_replay_engine import BookReplayEngine
+
+engine = BookReplayEngine({
+    'book_data': 'data/realtime/book/',
+    'tick_model': 'models/tick/best_model.pkl',
+    'book_model': 'models/book/microstructure.pkl',
+    'initial_capital': 100000
+})
+
+results = engine.run_replay(
+    start_date='2025-07-01',
+    end_date='2025-07-31',
+    use_hmarl=True
+)
+
+print(f"Sharpe Ratio: {results['sharpe']:.2f}")
+print(f"Max Drawdown: {results['max_drawdown']:.1%}")
+```
+
+#### 6. Monitoramento e Debug
+
+**Monitor em Tempo Real**:
+```bash
+# Dashboard do sistema
+python scripts/trading_dashboard.py
+
+# Monitor de agentes HMARL
+python scripts/hmarl_monitor.py --agents all
+
+# Log viewer
+tail -f logs/trading_system.log | grep -E "(SIGNAL|TRADE|ERROR)"
+```
+
+**Debug de Features**:
+```python
+# Verificar features calculadas
+from src.features.feature_debugger import FeatureDebugger
+
+debugger = FeatureDebugger()
+debugger.check_features('data/features/latest.parquet')
+debugger.plot_correlations()
+debugger.find_missing_values()
+```
+
+#### 7. Manutenção
+
+**Limpeza de Dados**:
+```bash
+# Limpar dados antigos (manter últimos 30 dias)
+python scripts/cleanup_old_data.py --keep-days 30
+
+# Compactar book histórico
+python scripts/compress_book_data.py --before 2025-07-01
+```
+
+**Atualização de Modelos**:
+```bash
+# Re-treinar com dados recentes
+python scripts/retrain_models.py --incremental true
+
+# Validar modelos antes de produção
+python scripts/validate_models.py --path models/new/
+```
+
+### Próximos Passos Pendentes:
+
+1. **Validação Cruzada Temporal Avançada**
+   - Walk-forward analysis mais robusta
+   - Purged cross-validation para evitar data leakage
+   - Métricas específicas por regime
+
+2. **Sistema de Backtesting com Book**
+   - Replay de book histórico
+   - Simulação de agentes HMARL
+   - Análise de impacto de mercado
+
+3. **Otimização de Produção**
+   - Auto-tuning de hiperparâmetros
+   - Monitoramento de drift
+   - A/B testing de estratégias
+
+### Documentação Criada:
+
+- `PRE_TRAINING_CHECKLIST.md` - Checklist completo antes do treinamento
+- `DUAL_TRAINING_HMARL_INTEGRATION.md` - Guia da integração
+- `docs/HMARL_*.md` - Documentação completa HMARL
+
+### Arquivos Importantes Modificados:
+
+1. **connection_manager_v4.py** - Adicionados callbacks de book
+2. **dual_training_system.py** - Sistema dual com HMARL
+3. **Novos arquivos em src/infrastructure/** - Infraestrutura HMARL
+4. **Novos arquivos em src/agents/** - Agentes especializados
+5. **Novos arquivos em src/coordination/** - Coordenadores
+
+### Problemas Conhecidos e Soluções
+
+#### 1. Book Collector Travando
+**Problema**: Sistema trava após subscrever tickers
+**Solução**: 
+- Use `book_collector_final_solution.py` (mais estável)
+- Execute apenas durante pregão (seg-sex, 9h-18h)
+- Re-registre callbacks após login com SetOfferBookCallbackV2()
+
+#### 2. Dados Corrompidos
+**Problema**: Ticker aparece como unicode inválido ('\ua9d0\u5eec\u029b')
+**Solução**:
+- Problema de marshalling do ctypes
+- Use versão final que valida dados antes de salvar
+- Filtre dados com preços <= 0 ou > 1000000
+
+#### 3. Sem Dados no Book
+**Problema**: Callbacks não são disparados
+**Solução**:
+- Verifique se é horário de pregão
+- Tente múltiplos tickers (WDOU25, PETR4, VALE3)
+- Use RequestMarketData() como fallback
+
+#### 4. ModuleNotFoundError
+**Problema**: Módulos não encontrados ao importar
+**Solução**:
+```bash
+# Adicionar ao PYTHONPATH
+export PYTHONPATH="${PYTHONPATH}:/caminho/para/QuantumTrader_ML"
+
+# Ou no código
+import sys
+sys.path.append('/caminho/para/QuantumTrader_ML')
+```
+
 ---
 
-*Última atualização: 01/08/2025*
-*Versão do Sistema: 2.0*
+*Última atualização: 04/08/2025*
+*Versão do Sistema: 2.1.1 (com HMARL e Book Collector otimizado)*

@@ -557,13 +557,22 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
     
-    config = {
-        'dll_path': r"C:\Users\marth\Downloads\ProfitDLL\DLLs\Win64\ProfitDLL.dll",
-        'username': os.getenv("PROFIT_USERNAME"),
-        'password': os.getenv("PROFIT_PASSWORD"),
-        'key': os.getenv("PROFIT_KEY"),
-        'port': 6789
-    }
+    # Verificar se há config via variável de ambiente
+    config_file = os.getenv('PROFIT_SERVER_CONFIG')
+    if config_file and os.path.exists(config_file):
+        import json
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+        config['port'] = config.get('port', 6789)
+    else:
+        config = {
+            'dll_path': './ProfitDLL64.dll',
+            'username': os.getenv("PROFIT_USERNAME", "user"),
+            'password': os.getenv("PROFIT_PASSWORD", "pass"),
+            'key': os.getenv("PROFIT_KEY", "HMARL"),
+            'port': 6789
+        }
     
     print("Iniciando ProfitDLL Server...")
+    print(f"DLL: {config['dll_path']}")
     run_server(config)

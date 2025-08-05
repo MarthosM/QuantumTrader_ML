@@ -1,0 +1,13 @@
+Funções encontradas na ProfitDLL64.dll:
+==================================================
+DLLInitializeLogin
+GetAgentNameByID
+GetHistoryTrades
+SendOrder
+SetOfferBookCallback
+SetOfferBookCallbackV2
+SetPriceBookCallback
+SetPriceBookCallbackV2
+SetTradeCallback
+SetTradeCallbackV2
+SubscribeTicker
