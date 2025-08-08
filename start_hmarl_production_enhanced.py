@@ -808,8 +808,8 @@ def main():
             except Exception as e:
                 print(f"Erro na finalização: {e}")
                 # Forçar saída imediata
-                import os
-                os._exit(0)
+                import sys
+                sys.exit(1)
 
 if __name__ == "__main__":
     sys.exit(main())
