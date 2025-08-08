@@ -650,41 +650,56 @@ class EnhancedHMARLProductionSystem(ProductionFixedSystem):
     
     def cleanup(self):
         """Cleanup completo incluindo agentes"""
-        # Primeiro sinalizar para parar
-        self.is_running = False
-        
-        # Parar monitor primeiro (rapido)
-        self.stop_monitor()
-        
-        # Parar agentes com timeout curto
-        if self.agent_threads:
-            self.logger.info("Finalizando agentes HMARL...")
+        try:
+            # Primeiro sinalizar para parar
+            self.is_running = False
             
-            # Dar tempo para agentes perceberem is_running = False
-            time.sleep(0.5)
+            # Parar monitor primeiro (rapido)
+            try:
+                self.stop_monitor()
+            except:
+                pass
             
-            # Tentar finalizar cada agente com timeout muito curto
-            for thread in self.agent_threads:
-                if thread.is_alive():
-                    thread.join(timeout=0.1)  # Timeout muito curto
-                    
-                    # Se ainda estiver vivo, apenas avisar
-                    if thread.is_alive():
-                        self.logger.debug(f"Agente {thread.name} nao finalizou a tempo")
+            # Parar agentes - não esperar, são daemon threads
+            if self.agent_threads:
+                self.logger.info("Finalizando agentes HMARL...")
+                # Apenas sinalizar para parar, não esperar
+                self.is_running = False
+                self.logger.info("Agentes sinalizados para parar")
             
-            # Nao esperar mais - deixar threads daemon morrerem sozinhas
-            self.logger.info("Agentes sinalizados para parar")
-        
-        # Cleanup da classe base
-        super().cleanup()
-        
-        # Fechar ZMQ
-        if self.zmq_context:
-            self.zmq_context.term()
+            # Fechar ZMQ antes do cleanup da classe base
+            try:
+                if self.zmq_context:
+                    # Não usar term() pois pode travar
+                    self.zmq_context = None
+            except:
+                pass
+                
+            # Fechar Valkey
+            try:
+                if self.valkey_client:
+                    self.valkey_client.close()
+            except:
+                pass
             
-        # Fechar Valkey
-        if self.valkey_client:
-            self.valkey_client.close()
+            # Cleanup da classe base por último
+            try:
+                super().cleanup()
+            except Exception as e:
+                self.logger.debug(f"Erro no cleanup base: {e}")
+                
+        except Exception as e:
+            self.logger.error(f"Erro durante cleanup: {e}")
+        finally:
+            # Forçar saída após 1 segundo
+            def force_exit():
+                import os
+                os._exit(0)
+            
+            import threading
+            timer = threading.Timer(1.0, force_exit)
+            timer.daemon = True
+            timer.start()
 
 def main():
     print("\n" + "="*60)
@@ -771,25 +786,30 @@ def main():
         
     finally:
         if 'system' in locals():
-            system.stop()
-            system.cleanup()
-            
-            # Stats finais
-            print("\n" + "="*60)
-            print("ESTATÍSTICAS FINAIS")
-            print("="*60)
-            print(f"Callbacks totais:")
-            for cb_type, count in system.callbacks.items():
-                if count > 0:
-                    print(f"  {cb_type}: {count:,}")
-            print(f"Predições ML: {system.stats['predictions']}")
-            if system.hmarl_enabled:
-                print(f"\nEstatísticas HMARL REAIS:")
-                print(f"  Broadcasts enviados: {system.hmarl_stats['broadcast_count']}")
-                print(f"  Sinais recebidos: {system.hmarl_stats['real_agent_signals']}")
-                print(f"  Consensos calculados: {system.hmarl_stats['agent_consensus']}")
-                print(f"  Predições enhanced: {system.hmarl_stats['enhanced_predictions']}")
-            print("="*60)
+            try:
+                # Tentar imprimir stats rapidamente
+                print("\n" + "="*60)
+                print("FINALIZANDO SISTEMA...")
+                print("="*60)
+                
+                # Stop rápido
+                system.is_running = False
+                
+                # Stats básicas se disponíveis
+                try:
+                    print(f"Predições ML: {system.stats.get('predictions', 0)}")
+                    print(f"Trades: {system.stats.get('trades', 0)}")
+                except:
+                    pass
+                
+                # Cleanup com timeout
+                system.cleanup()
+                
+            except Exception as e:
+                print(f"Erro na finalização: {e}")
+                # Forçar saída imediata
+                import os
+                os._exit(0)
 
 if __name__ == "__main__":
     sys.exit(main())
