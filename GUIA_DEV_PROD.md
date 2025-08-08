@@ -1,7 +1,31 @@
 # Guia DEV - Produção (ATUALIZADO)
 
-**Última Atualização**: 2025-01-08  
-**Modelo em Produção**: book_clean (79.23% Trading Accuracy)
+**Última Atualização**: 2025-08-08  
+**Status**: 🔧 Integração do Sistema Completo em Andamento
+
+## ⚠️ ALERTA IMPORTANTE - SISTEMA EM ATUALIZAÇÃO
+
+### Problema Identificado (08/08/2025)
+- **Modelos ML foram treinados com 65 features complexas** de microestrutura
+- **Sistema atual calcula apenas 11 features básicas**
+- **Resultado**: Predições retornando zero ou valores incorretos
+
+### Solução em Desenvolvimento
+- ✅ Plano completo criado em [SISTEMA_INTEGRADO_COMPLETO.md](SISTEMA_INTEGRADO_COMPLETO.md)
+- 🔧 Integração do BookFeatureEngineer para calcular todas as 65 features
+- 🔧 Adaptação do sistema de produção para usar features completas
+- 📋 Checklist de testes para validação de cada etapa
+
+### Uso Temporário
+Enquanto a integração não está completa, use o modelo simples:
+```bash
+python create_simple_model.py  # Criar modelo compatível
+python start_hmarl_production_enhanced.py  # Rodar com modelo simples
+```
+
+---
+
+**Modelo Original**: book_clean (79.23% Trading Accuracy - AGUARDANDO INTEGRAÇÃO)
 
 ## 🚀 OPÇÕES DE PRODUÇÃO DISPONÍVEIS
 

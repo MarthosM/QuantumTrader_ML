@@ -400,11 +400,19 @@ class ProductionFixedSystem:
                 self.logger.warning("Diretório de modelos não encontrado")
                 return
                 
+            # Lista de modelos compatíveis (11 features básicas)
+            compatible_models = ['simple_model']
+            
             for model_file in models_dir.glob('*.pkl'):
                 try:
                     model_name = model_file.stem
                     
                     if 'scaler' in model_name.lower():
+                        continue
+                    
+                    # Carregar apenas modelos compatíveis
+                    if model_name not in compatible_models:
+                        self.logger.debug(f"Pulando modelo incompatível: {model_name}")
                         continue
                         
                     self.logger.info(f"Carregando modelo: {model_name}")
@@ -495,11 +503,13 @@ class ProductionFixedSystem:
     def _make_prediction(self):
         """Faz predição ML com dados reais"""
         if not self.models:
+            self.logger.debug("Sem modelos carregados")
             return None
             
         try:
             features = self._calculate_features()
             if not features:
+                self.logger.debug("Features não calculadas")
                 return None
                 
             predictions = []
@@ -509,6 +519,7 @@ class ProductionFixedSystem:
                 try:
                     feature_list = self.features_lists.get(model_name, [])
                     if not feature_list:
+                        self.logger.debug(f"Sem lista de features para {model_name}")
                         continue
                         
                     feature_vector = []
@@ -528,11 +539,13 @@ class ProductionFixedSystem:
                         
                     predictions.append(pred)
                     confidences.append(conf)
+                    self.logger.debug(f"{model_name}: pred={pred:.4f}, conf={conf:.4f}")
                     
                 except Exception as e:
-                    self.logger.debug(f"Erro na predição {model_name}: {e}")
+                    self.logger.error(f"Erro na predição {model_name}: {e}")
                     
             if not predictions:
+                self.logger.debug("Nenhuma predição gerada")
                 return None
                 
             # Ensemble
