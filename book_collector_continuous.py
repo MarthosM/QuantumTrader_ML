@@ -77,6 +77,7 @@ class ContinuousBookCollector:
         self.market_close = dtime(18, 0)   # 18:00
         self.save_interval = 300            # Salvar a cada 5 minutos
         self.rotate_size = 100000           # Rotacionar arquivo a cada 100k registros
+        self.last_consolidation_hour = -1   # Controle de consolidacao
         
         # Estatísticas
         self.stats = {
@@ -560,6 +561,30 @@ class ContinuousBookCollector:
             import traceback
             traceback.print_exc()
             
+    def consolidate_data(self):
+        """Executa consolidacao automatica"""
+        try:
+            self.logger.info("\n" + "="*50)
+            self.logger.info("INICIANDO CONSOLIDACAO AUTOMATICA")
+            self.logger.info("="*50)
+            
+            import subprocess
+            date = datetime.now().strftime('%Y%m%d')
+            
+            result = subprocess.run(
+                ['python', 'auto_consolidate_book_data.py', date],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                self.logger.info("[OK] Consolidacao concluida com sucesso")
+            else:
+                self.logger.error(f"[ERRO] Falha na consolidacao: {result.stderr}")
+                
+        except Exception as e:
+            self.logger.error(f"[ERRO] ao consolidar: {e}")
+            
     def run_continuous(self):
         """Executa coleta contínua até o fim do pregão"""
         self.is_running = True
@@ -592,8 +617,17 @@ class ContinuousBookCollector:
                 
                 # Salvar periodicamente
                 if (current_time - last_save_time) >= self.save_interval:
+                    current_datetime = datetime.now()
+                    self.logger.info("\n" + "="*50)
+                    self.logger.info(f"Salvando dados as {current_datetime.strftime('%H:%M:%S')}")
+                    self.logger.info("="*50)
                     self.save_data()
                     last_save_time = current_time
+                    
+                    # Consolidar dados automaticamente a cada hora
+                    if current_datetime.hour != self.last_consolidation_hour and current_datetime.minute <= 5:
+                        self.consolidate_data()
+                        self.last_consolidation_hour = current_datetime.hour
                     
                 # Rotação por tamanho
                 with self.data_lock:

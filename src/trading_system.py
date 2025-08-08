@@ -70,16 +70,16 @@ except ImportError:
     ProductionDataValidator = None
     ProductionDataError = Exception
 
-from dashboard_simple import RealTimeDashboard
-from model_monitor_simple import MLModelMonitor
-from alerting_system_simple import AlertingSystem
-from diagnostics_simple import DiagnosticSuite
-from performance_analyzer_simple import PerformanceAnalyzer
+from src.dashboard_simple import RealTimeDashboard
+from src.model_monitor_simple import MLModelMonitor
+from src.alerting_system_simple import AlertingSystem
+from src.diagnostics_simple import DiagnosticSuite
+from src.performance_analyzer_simple import PerformanceAnalyzer
 
 # Integração ML Flow
 import sys
 import os
-from profit_dll_structures import (
+from src.profit_dll_structures import (
     OrderSide, OrderType, NResult,
     create_account_identifier, create_send_order
 )

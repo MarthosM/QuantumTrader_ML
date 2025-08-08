@@ -8,7 +8,7 @@ import threading
 import time
 
 # Import dos coletores de métricas
-from metrics_collectors import (
+from src.metrics_collectors import (
     SystemMetricsCollector,
     TradingMetricsCollector, 
     ModelMetricsCollector,
